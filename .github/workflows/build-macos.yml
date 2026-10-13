@@ -35,31 +35,31 @@ jobs:
         continue-on-error: true
         run: |
           killall -9 AudioComponentRegistrar 2>/dev/null || true
-          auval -v aufx Db69 Mrcu
+          auval -v aufx Kt69 Lull
 
       - name: Firma ad-hoc e pacchetto
         run: |
           A=build/DB69_artefacts/Release
-          mkdir -p "dist/DB-69 Dub Filter"
-          cp -R "$A/VST3/DB-69 Dub Filter.vst3" "$A/AU/DB-69 Dub Filter.component" "$A/Standalone/DB-69 Dub Filter.app" "dist/DB-69 Dub Filter/"
-          for p in "dist/DB-69 Dub Filter/"*; do codesign --force --deep --sign - "$p"; done
-          cp scripts/installa.command "dist/DB-69 Dub Filter/Installa DB-69.command"
-          chmod +x "dist/DB-69 Dub Filter/Installa DB-69.command"
-          cp README.md "dist/DB-69 Dub Filter/"
-          lipo -info "dist/DB-69 Dub Filter/DB-69 Dub Filter.vst3/Contents/MacOS/DB-69 Dub Filter"
-          (cd dist && ditto -c -k --keepParent "DB-69 Dub Filter" ../DB69-macOS.zip)
+          mkdir -p "dist/KTDB-69"
+          cp -R "$A/VST3/KTDB-69.vst3" "$A/AU/KTDB-69.component" "$A/Standalone/KTDB-69.app" "dist/KTDB-69/"
+          for p in "dist/KTDB-69/"*; do codesign --force --deep --sign - "$p"; done
+          cp scripts/installa.command "dist/KTDB-69/Installa KTDB-69.command"
+          chmod +x "dist/KTDB-69/Installa KTDB-69.command"
+          cp README.md "dist/KTDB-69/"
+          lipo -info "dist/KTDB-69/KTDB-69.vst3/Contents/MacOS/KTDB-69"
+          (cd dist && ditto -c -k --keepParent "KTDB-69" ../KTDB69-macOS.zip)
 
       - name: Carica l'artefatto
         uses: actions/upload-artifact@v4
         with:
-          name: DB69-macOS
-          path: DB69-macOS.zip
+          name: KTDB69-macOS
+          path: KTDB69-macOS.zip
 
       - name: Pubblica la release (solo per i tag v*)
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" DB69-macOS.zip \
-            --title "DB-69 Dub Filter ${GITHUB_REF_NAME}" \
+          gh release create "${GITHUB_REF_NAME}" KTDB69-macOS.zip \
+            --title "KTDB-69 ${GITHUB_REF_NAME}" \
             --notes "Build macOS universale (Apple Silicon e Intel) con VST3, AU e Standalone."

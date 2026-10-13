@@ -4,10 +4,7 @@ namespace
 {
     constexpr float twoPi = juce::MathConstants<float>::twoPi;
 
-    juce::Font font (float size, bool bold = true)
-    {
-        return juce::Font (juce::FontOptions (size, bold ? juce::Font::bold : juce::Font::plain));
-    }
+    using ui::font;
 
     juce::Path flutedCircle (juce::Point<float> c, float r, int flutes, float depth)
     {
@@ -81,7 +78,7 @@ namespace
 
         // indice sulla gonna
         const auto p0 = polarPt (c, rs * 1.0f, angleDeg), p1 = polarPt (c, r * 0.97f, angleDeg);
-        g.setColour (ui::cream);
+        g.setColour (ui::theme().text);
         g.drawLine ({ p0, p1 }, r * (big ? 0.045f : 0.09f));
 
         // cappello in alluminio
@@ -104,13 +101,13 @@ namespace
 PanelLookAndFeel::PanelLookAndFeel()
 {
     setColour (juce::PopupMenu::backgroundColourId, juce::Colour (0xff222420));
-    setColour (juce::PopupMenu::textColourId, ui::cream);
-    setColour (juce::PopupMenu::highlightedBackgroundColourId, ui::panel);
+    setColour (juce::PopupMenu::textColourId, ui::theme().text);
+    setColour (juce::PopupMenu::highlightedBackgroundColourId, ui::theme().panelTop);
     setColour (juce::PopupMenu::highlightedTextColourId, juce::Colours::white);
-    setColour (juce::Slider::textBoxTextColourId, ui::cream);
+    setColour (juce::Slider::textBoxTextColourId, ui::theme().text);
     setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
     setColour (juce::TooltipWindow::backgroundColourId, juce::Colour (0xff222420));
-    setColour (juce::TooltipWindow::textColourId, ui::cream);
+    setColour (juce::TooltipWindow::textColourId, ui::theme().text);
 }
 
 void PanelLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos,
@@ -125,7 +122,7 @@ void PanelLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w,
     const float mid = startAngle + (endAngle - startAngle) * 0.5f, cur = startAngle + pos * (endAngle - startAngle);
     juce::Path val;
     val.addCentredArc (c.x, c.y, r + 2.5f, r + 2.5f, 0, juce::jmin (mid, cur), juce::jmax (mid, cur), true);
-    g.setColour (ui::amber);
+    g.setColour (ui::theme().accent);
     g.strokePath (val, juce::PathStrokeType (2.0f));
     drawKnob (g, c, r * 0.92f, juce::radiansToDegrees (cur), false);
 }
@@ -154,7 +151,7 @@ void SteppedKnob::paint (juce::Graphics& g)
     const bool big = style == Style::Big;
 
     // scala
-    g.setColour (ui::cream);
+    g.setColour (ui::theme().text);
     for (size_t i = 0; i < angles.size(); ++i)
     {
         const float a = angles[i];
@@ -200,7 +197,7 @@ void SteppedKnob::paint (juce::Graphics& g)
     if (learning)
     {
         const float t = (float) (juce::Time::getMillisecondCounter() % 1000) / 1000.0f;
-        g.setColour (ui::amber.withAlpha (0.45f + 0.45f * std::sin (t * twoPi)));
+        g.setColour (ui::theme().accent.withAlpha (0.45f + 0.45f * std::sin (t * twoPi)));
         g.drawEllipse (c.x - radius - 5, c.y - radius - 5, (radius + 5) * 2, (radius + 5) * 2, 2.5f);
     }
 
@@ -285,10 +282,10 @@ void ClickToggle::paintButton (juce::Graphics& g, bool highlighted, bool)
     g.setColour (juce::Colour (0xff2a2b28).brighter (highlighted ? 0.15f : 0.0f));
     g.fillRoundedRectangle (b, 5.0f);
     auto led = b.removeFromLeft (b.getHeight()).reduced (b.getHeight() * 0.32f);
-    g.setColour (getToggleState() ? ui::amber : juce::Colour (0xff4a4a44));
+    g.setColour (getToggleState() ? ui::theme().accent : juce::Colour (0xff4a4a44));
     g.fillEllipse (led);
-    if (getToggleState()) { g.setColour (ui::amber.withAlpha (0.3f)); g.fillEllipse (led.expanded (3.0f)); }
-    g.setColour (ui::cream);
+    if (getToggleState()) { g.setColour (ui::theme().accent.withAlpha (0.3f)); g.fillEllipse (led.expanded (3.0f)); }
+    g.setColour (ui::theme().text);
     g.setFont (font (12.0f));
     g.drawText (getToggleState() ? "CLICK SELETTORE" : "SENZA CLICK", b, juce::Justification::centredLeft);
 }
@@ -383,8 +380,8 @@ void PanelContent::drawPanel (juce::Graphics& g)
     g.setColour (juce::Colours::black.withAlpha (0.5f));
     g.fillRoundedRectangle (plate.translated (0, 3), 12.0f);
 
-    juce::ColourGradient pg (ui::panel.brighter (0.10f), plate.getX(), plate.getY(),
-                             ui::panelD, plate.getRight(), plate.getBottom(), false);
+    juce::ColourGradient pg (ui::theme().panelTop.brighter (0.10f), plate.getX(), plate.getY(),
+                             ui::theme().panelBot, plate.getRight(), plate.getBottom(), false);
     g.setGradientFill (pg);
     g.fillRoundedRectangle (plate, 12.0f);
 
@@ -413,27 +410,15 @@ void PanelContent::drawPanel (juce::Graphics& g)
         g.drawLine (pt.x - 4, pt.y + 2, pt.x + 4, pt.y - 2, 1.6f);
     }
 
-    // scritte
-    g.setColour (ui::cream);
-    g.setFont (font (13.0f));
-    g.drawText (juce::String (juce::CharPointer_UTF8 ("PASSIVE HPF  \xc2\xb7  600 \xce\xa9  \xc2\xb7  18 dB/OCT")), juce::Rectangle<float> (44, plate.getY() + 22, 300, 16), juce::Justification::left);
-    g.setFont (font (34.0f));
-    g.drawText ("DB-69", juce::Rectangle<float> (42, plate.getY() + 38, 200, 38), juce::Justification::left);
-    g.setFont (font (11.0f, false));
-    g.drawText ("TYPE 9069  DUB FILTER", juce::Rectangle<float> (44, plate.getY() + 76, 200, 14), juce::Justification::left);
+    // scritte: "TYPE 9069 DUB FILTER" giustificato sulla stessa larghezza di "KTDB-69"
+    g.setColour (ui::theme().text);
+    g.setFont (font (12.0f, false));
+    g.drawText (juce::String (juce::CharPointer_UTF8 ("PASSIVE HPF  \xc2\xb7  600 OHM  \xc2\xb7  18 dB/OCT")), juce::Rectangle<float> (44, plate.getY() + 20, 320, 16), juce::Justification::left);
+    const auto title = ui::drawInkLeft (g, "KTDB-69", font (36.0f), 44.0f, plate.getY() + 70.0f);
+    ui::drawJustified (g, "TYPE 9069 DUB FILTER", font (11.0f, false), title.getStart(), title.getEnd(), plate.getY() + 88.0f);
 
-    // marchio
-    {
-        const float x = plate.getRight() - 186, y = plate.getY() + 26;
-        g.setColour (ui::cream);
-        g.drawRoundedRectangle (x, y, 30, 30, 5, 1.8f);
-        g.setFont (font (20.0f));
-        g.drawText ("M", juce::Rectangle<float> (x, y, 30, 30), juce::Justification::centred);
-        g.setFont (font (15.0f));
-        g.drawText ("MERCURI", juce::Rectangle<float> (x + 38, y - 1, 120, 17), juce::Justification::left);
-        g.setFont (font (11.0f, false));
-        g.drawText ("A U D I O", juce::Rectangle<float> (x + 39, y + 16, 120, 14), juce::Justification::left);
-    }
+    // marchio LULL Audio
+    ui::drawBrand (g, juce::Rectangle<float> (plate.getRight() - 196, plate.getY() + 24, 170, 40), ui::theme().logo);
 
     g.setFont (font (14.0f));
     g.drawText ("MODE", juce::Rectangle<float> (100, (float) barH + 384, 100, 18), juce::Justification::centred);
@@ -445,9 +430,9 @@ void PanelContent::drawPanel (juce::Graphics& g)
 void PanelContent::paint (juce::Graphics& g)
 {
     // barra di servizio
-    g.setColour (ui::bar); g.fillRect (0, 0, baseW, barH);
+    g.setColour (ui::theme().bar); g.fillRect (0, 0, baseW, barH);
     g.setColour (juce::Colours::white.withAlpha (0.06f)); g.drawHorizontalLine (barH - 1, 0, (float) baseW);
-    g.setColour (ui::cream.withAlpha (0.8f));
+    g.setColour (ui::theme().text.withAlpha (0.8f));
     g.setFont (font (11.0f));
     g.drawText ("INPUT",  juce::Rectangle<float> (12, 0, 46, (float) barH), juce::Justification::centredRight);
     g.drawText ("OUTPUT", juce::Rectangle<float> (176, 0, 58, (float) barH), juce::Justification::centredRight);
@@ -468,11 +453,11 @@ void PanelContent::paint (juce::Graphics& g)
         line2 = cc >= 0 ? "ultimo: CC" + juce::String (cc) + " = " + juce::String (proc.lastCCValue.load())
                         : juce::String ("clic destro su un comando: MIDI Learn");
     }
-    g.setColour (learn >= 0 ? ui::amber : ui::cream.withAlpha (0.75f));
+    g.setColour (learn >= 0 ? ui::theme().accent : ui::theme().text.withAlpha (0.75f));
     g.setFont (font (11.0f));
-    g.drawText (line1, juce::Rectangle<float> (514, 5, 256, 16), juce::Justification::centredRight);
+    g.drawFittedText (line1, juce::Rectangle<int> (514, 5, 256, 16), juce::Justification::centredRight, 1, 0.7f);
     g.setFont (font (11.0f, false));
-    g.drawText (line2, juce::Rectangle<float> (514, 22, 256, 16), juce::Justification::centredRight);
+    g.drawFittedText (line2, juce::Rectangle<int> (514, 22, 256, 16), juce::Justification::centredRight, 1, 0.7f);
 
     drawPanel (g);
 }
@@ -485,7 +470,7 @@ void PanelContent::paintOverChildren (juce::Graphics& g)
                        : learn == DB69Processor::lClicks ? (juce::Component*) &clickBtn : nullptr;
     if (t != nullptr)
     {
-        g.setColour (ui::amber);
+        g.setColour (ui::theme().accent);
         g.drawRoundedRectangle (t->getBounds().toFloat().expanded (2.0f), 5.0f, 2.0f);
     }
 }

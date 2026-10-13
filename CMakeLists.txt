@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.22)
 set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "")
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "")
 
-project(DB69 VERSION 1.0.0 LANGUAGES C CXX)
+project(KTDB69 VERSION 1.0.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -21,12 +21,18 @@ else()
     FetchContent_MakeAvailable(JUCE)
 endif()
 
+# font incorporati (TeX Gyre Adventor, GUST Font License)
+juce_add_binary_data(KTDB69Assets SOURCES
+    resources/fonts/texgyreadventor-regular.otf
+    resources/fonts/texgyreadventor-bold.otf)
+
 juce_add_plugin(DB69
-    COMPANY_NAME "Mercuri Audio"
-    BUNDLE_ID com.mercuriaudio.db69
-    PLUGIN_MANUFACTURER_CODE Mrcu
-    PLUGIN_CODE Db69
-    PRODUCT_NAME "DB-69 Dub Filter"
+    COMPANY_NAME "LULL Audio"
+    BUNDLE_ID com.lullaudio.ktdb69
+    PLUGIN_MANUFACTURER_CODE Lull
+    PLUGIN_CODE Kt69
+    PRODUCT_NAME "KTDB-69"
+    ICON_BIG resources/icon.png        # icona della Standalone (generata da gui_snapshot icon.png)
     FORMATS VST3 AU Standalone
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT TRUE          # riceve i CC dalla tastiera controller
@@ -36,7 +42,7 @@ juce_add_plugin(DB69
     VST3_CATEGORIES Fx Filter
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     MICROPHONE_PERMISSION_ENABLED TRUE
-    MICROPHONE_PERMISSION_TEXT "DB-69 usa l'ingresso della scheda audio per elaborare il segnale."
+    MICROPHONE_PERMISSION_TEXT "KTDB-69 usa l'ingresso della scheda audio per elaborare il segnale."
     COPY_PLUGIN_AFTER_BUILD TRUE)
 
 target_sources(DB69 PRIVATE
@@ -49,7 +55,7 @@ target_compile_definitions(DB69 PUBLIC
     JUCE_VST3_CAN_REPLACE_VST2=0)
 
 target_link_libraries(DB69
-    PRIVATE juce::juce_audio_utils juce::juce_dsp
+    PRIVATE KTDB69Assets juce::juce_audio_utils juce::juce_dsp
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
 
 # Test del modello DSP (senza JUCE)
@@ -66,13 +72,13 @@ if(DB69_BUILD_SNAPSHOT)
     target_sources(gui_snapshot PRIVATE tests/gui_snapshot.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp)
     target_include_directories(gui_snapshot PRIVATE Source)
     target_compile_definitions(gui_snapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
-        JucePlugin_Name="DB-69 Dub Filter" JUCE_STANDALONE_APPLICATION=1)
-    target_link_libraries(gui_snapshot PRIVATE juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
+        JucePlugin_Name="KTDB-69" JUCE_STANDALONE_APPLICATION=1)
+    target_link_libraries(gui_snapshot PRIVATE KTDB69Assets juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
 
     juce_add_console_app(processor_test PRODUCT_NAME "processor_test")
     target_sources(processor_test PRIVATE tests/processor_test.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp)
     target_include_directories(processor_test PRIVATE Source)
     target_compile_definitions(processor_test PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
-        JucePlugin_Name="DB-69 Dub Filter" JUCE_STANDALONE_APPLICATION=1)
-    target_link_libraries(processor_test PRIVATE juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
+        JucePlugin_Name="KTDB-69" JUCE_STANDALONE_APPLICATION=1)
+    target_link_libraries(processor_test PRIVATE KTDB69Assets juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
 endif()

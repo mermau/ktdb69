@@ -4,14 +4,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "PluginProcessor.h"
 
-namespace ui
-{
-    const juce::Colour cream  { 0xffe9e2cc };
-    const juce::Colour panel  { 0xff3b4832 };
-    const juce::Colour panelD { 0xff2c3626 };
-    const juce::Colour bar    { 0xff1a1b19 };
-    const juce::Colour amber  { 0xffe39a3b };
-}
+#include "Theme.h"
 
 //==============================================================================
 class PanelLookAndFeel : public juce::LookAndFeel_V4
@@ -115,7 +108,7 @@ public:
     explicit DB69Editor (DB69Processor&);
     ~DB69Editor() override;
     void resized() override;
-    void paint (juce::Graphics& g) override { g.fillAll (ui::bar); }
+    void paint (juce::Graphics& g) override { g.fillAll (ui::theme().bar); }
 
 private:
     void timerCallback() override;

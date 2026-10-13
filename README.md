@@ -1,10 +1,21 @@
-# DB-69 Dub Filter — emulazione del filtro passa-alto passivo Altec 9069B (VST3 / AU / Standalone)
+# KTKTDB-69 (LULL Audio) — emulazione del filtro passa-alto passivo Altec 9069B (VST3 / AU / Standalone)
 
 Plugin in C++17 con JUCE 8. Riproduce il "Big Knob" di King Tubby: il filtro passa-alto passivo
 Altec 9069B (rete LC da 600 Ω, 18 dB/ottava, 10 frequenze da 70 Hz a 7.5 kHz più OFF), con i tre
 modi del KTBK-1B di Audio Merge, che ha fornito le curve di riferimento.
 
 ![Interfaccia](docs/screenshot.png)
+
+## Grafica
+
+Pannello verde oliva, font TeX Gyre Adventor (stile Avant Garde, incorporato nel plugin) e logo
+LULL Audio con tre curve passa-alto: tre scatti della manopola grande. Lo stesso logo è l'icona
+dell'app Standalone. "TYPE 9069 DUB FILTER" è spaziato per occupare esattamente la larghezza di
+"KTDB-69", e "AUDIO" quella di "LULL": la spaziatura si calcola sui contorni reali delle lettere
+(`ui::drawJustified` in `Source/Theme.h`).
+
+Il font è distribuito con la GUST Font License (`resources/fonts/GUST-FONT-LICENSE.txt`), che ne
+consente l'incorporamento. L'icona si rigenera con `gui_snapshot resources/icon.png`.
 
 ## Comandi
 
@@ -49,7 +60,7 @@ posizioni non fa "tremolare" il selettore.
   pulsante in modalità *Gate/Momentary*.
 - Gli encoder della KeyLab vanno lasciati in modalità *Absolute* (0–127).
 - **Ableton Live**: metti il plugin sulla traccia; crea una traccia MIDI con ingresso KeyLab e in
-  *MIDI To* scegli la traccia del filtro → "DB-69 Dub Filter". In alternativa usa la mappatura MIDI
+  *MIDI To* scegli la traccia del filtro → "KTKTDB-69". In alternativa usa la mappatura MIDI
   di Live (Cmd+M) sui parametri del plugin.
 - **Logic Pro**: l'AU è un normale effetto (Audio FX) e non riceve CC direttamente: usa
   l'assegnazione controller di Logic (Cmd+K, muovi il comando nel plugin, poi quello sulla KeyLab).
@@ -61,15 +72,15 @@ Ogni modifica su `main` viene compilata da GitHub Actions su macOS (universal bi
 con i test del modello e la validazione `auval` dell'Audio Unit.
 
 1. Nel repository apri **Actions → Build macOS**, scegli l'ultima esecuzione riuscita e scarica
-   l'artefatto **DB69-macOS**. Per una versione "ufficiale" crea un tag `v1.0.0`: la build compare
+   l'artefatto **KTDB69-macOS**. Per una versione "ufficiale" crea un tag `v1.0.0`: la build compare
    anche in **Releases**, scaricabile senza login.
-2. Estrai lo zip (contiene a sua volta `DB69-macOS.zip`, estrai anche quello).
+2. Estrai lo zip (contiene a sua volta `KTDB69-macOS.zip`, estrai anche quello).
 3. Il plugin non è firmato con un certificato Apple Developer: apri il Terminale e trascina dentro la
-   cartella `DB-69 Dub Filter` dopo questo comando:
+   cartella `KTKTDB-69` dopo questo comando:
    ```
    xattr -dr com.apple.quarantine 
    ```
-   poi fai doppio clic su **Installa DB-69.command** (copia VST3 e AU nelle cartelle dei plugin
+   poi fai doppio clic su **Installa KTKTDB-69.command** (copia VST3 e AU nelle cartelle dei plugin
    dell'utente e l'app Standalone in Applicazioni).
 4. Riavvia la DAW (in Logic: se non compare, *Plug-in Manager → Reimposta e riscansiona*).
 

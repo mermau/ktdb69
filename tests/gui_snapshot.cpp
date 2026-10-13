@@ -1,4 +1,5 @@
 // Salva l'interfaccia del plugin in PNG (uso: gui_snapshot out.png [scala] [freq mode bell])
+// Con un nome che finisce in "icon.png" genera invece l'icona 1024×1024 dell'app Standalone
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
@@ -6,6 +7,12 @@
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
+    if (argc > 1 && juce::String (argv[1]).endsWith ("icon.png"))   // genera l'icona dell'app
+    {
+        auto img = ui::makeIcon (1024);
+        juce::File out (juce::File::getCurrentWorkingDirectory().getChildFile (argv[1])); out.deleteFile();
+        juce::FileOutputStream os (out); juce::PNGImageFormat().writeImageToStream (img, os); return 0;
+    }
     DB69Processor proc;
     if (argc >= 6)
     {
