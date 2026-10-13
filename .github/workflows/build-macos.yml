@@ -1,0 +1,65 @@
+name: Build macOS
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # per pubblicare le release quando si crea un tag v*
+
+jobs:
+  macos:
+    runs-on: macos-14          # Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache JUCE
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: juce-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configura (universal binary arm64 + x86_64)
+        run: cmake -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+      - name: Compila
+        run: cmake --build build --config Release --parallel
+
+      - name: Test del modello
+        run: ./build/Release/network_test
+
+      - name: Validazione Audio Unit (auval)
+        continue-on-error: true
+        run: |
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          auval -v aufx Db69 Mrcu
+
+      - name: Firma ad-hoc e pacchetto
+        run: |
+          A=build/DB69_artefacts/Release
+          mkdir -p "dist/DB-69 Dub Filter"
+          cp -R "$A/VST3/DB-69 Dub Filter.vst3" "$A/AU/DB-69 Dub Filter.component" "$A/Standalone/DB-69 Dub Filter.app" "dist/DB-69 Dub Filter/"
+          for p in "dist/DB-69 Dub Filter/"*; do codesign --force --deep --sign - "$p"; done
+          cp scripts/installa.command "dist/DB-69 Dub Filter/Installa DB-69.command"
+          chmod +x "dist/DB-69 Dub Filter/Installa DB-69.command"
+          cp README.md "dist/DB-69 Dub Filter/"
+          lipo -info "dist/DB-69 Dub Filter/DB-69 Dub Filter.vst3/Contents/MacOS/DB-69 Dub Filter"
+          (cd dist && ditto -c -k --keepParent "DB-69 Dub Filter" ../DB69-macOS.zip)
+
+      - name: Carica l'artefatto
+        uses: actions/upload-artifact@v4
+        with:
+          name: DB69-macOS
+          path: DB69-macOS.zip
+
+      - name: Pubblica la release (solo per i tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" DB69-macOS.zip \
+            --title "DB-69 Dub Filter ${GITHUB_REF_NAME}" \
+            --notes "Build macOS universale (Apple Silicon e Intel) con VST3, AU e Standalone."
