@@ -13,6 +13,8 @@ public:
     PanelLookAndFeel();
     void drawRotarySlider (juce::Graphics&, int x, int y, int w, int h, float pos,
                            float startAngle, float endAngle, juce::Slider&) override;
+    juce::Font getTextButtonFont (juce::TextButton&, int) override;
+    void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&, bool, bool) override;
 };
 
 //==============================================================================
@@ -67,7 +69,10 @@ public:
 class ClickToggle : public juce::ToggleButton
 {
 public:
-    ClickToggle() { setButtonText ("CLICK"); }
+    ClickToggle (juce::String on = "CLICK SELETTORE", juce::String off = "SENZA CLICK", bool alarm = false)
+        : onText (on), offText (off), alarmColour (alarm) { setButtonText (on); }
+    juce::String onText, offText;
+    bool alarmColour;
     std::function<void()> onLearnMenu;
     void paintButton (juce::Graphics&, bool highlighted, bool down) override;
     void mouseDown (const juce::MouseEvent& e) override;
@@ -95,10 +100,12 @@ private:
     DB69Processor& proc;
     std::unique_ptr<SteppedKnob> bigKnob, modeKnob, bellKnob;
     LearnableSlider inSlider, outSlider;
-    ClickToggle clickBtn;
+    ClickToggle clickBtn, bypassBtn { "BYPASS", "BYPASS", true };
+    juce::TextButton midiBtn;
+    void showMidiMenu();
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> inAtt, outAtt;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> clickAtt;
-    int lastLearnShown = -1;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> clickAtt, bypassAtt;
+    int lastLearnShown = -1, lastCCShown = 0;
 };
 
 //==============================================================================
@@ -115,5 +122,4 @@ private:
     DB69Processor& proc;
     PanelLookAndFeel lnf;
     PanelContent content;
-    int lastLearn = -2, lastMapVersion = -1, lastCCCount = -1;
 };

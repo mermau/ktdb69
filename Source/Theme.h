@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================
-//  KTDB-69 / LULL Audio — grafica: colori, font incorporati, logo, testo giustificato
+//  KTDB-69 / Collateral Effects — grafica: colori, font incorporati, logo, testo giustificato
 //  Font: TeX Gyre Adventor (GUST Font License, vedi resources/fonts/GUST-FONT-LICENSE.txt)
 // =============================================================================
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -51,8 +51,13 @@ inline juce::Range<float> inkExtent (const juce::String& text, const juce::Font&
         if (gl.isWhitespace()) continue;
         juce::Path p; gl.createPath (p);
         if (p.isEmpty()) continue;
-        const auto b = p.getBounds();
-        l = juce::jmin (l, b.getX()); r = juce::jmax (r, b.getRight());
+        // Path::getBounds() include i punti di controllo delle curve (una "C" risulterebbe più larga):
+        // si misura il contorno vero, appiattito in segmenti
+        for (juce::PathFlatteningIterator it (p, {}, 0.01f); it.next();)
+        {
+            l = juce::jmin (l, it.x1, it.x2);
+            r = juce::jmax (r, it.x1, it.x2);
+        }
     }
     return { l, r };
 }
@@ -79,13 +84,14 @@ inline juce::Range<float> drawInkLeft (juce::Graphics& g, const juce::String& te
                                        float x, float baselineY)
 {
     const auto ink = inkExtent (text, f);
-    g.setFont (f);
-    g.drawSingleLineText (text, juce::roundToInt (x - ink.getStart()), juce::roundToInt (baselineY));
+    juce::GlyphArrangement ga;                       // posizione in virgola mobile: nessun arrotondamento
+    ga.addLineOfText (f, text, x - ink.getStart(), baselineY);
+    ga.draw (g);
     return { x, x + ink.getLength() };
 }
 
 //==============================================================================
-// Logo LULL Audio: tre curve passa-alto (tre scatti della manopola grande) sulla stessa base
+// Logo Collateral Effects: tre curve passa-alto (tre scatti della manopola grande) sulla stessa base
 inline void drawLogo (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour col, float stroke)
 {
     g.setColour (col);
@@ -114,15 +120,17 @@ inline void drawLogo (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour 
     g.drawLine (in.getX(), in.getBottom(), in.getRight(), in.getBottom(), stroke * 0.6f);
 }
 
-// Logo + "LULL" con sotto "AUDIO" giustificato esattamente sulla larghezza di "LULL"
-inline void drawBrand (juce::Graphics& g, juce::Rectangle<float> area, juce::Colour col)
+// Logo + "COLLATERAL" con sotto "EFFECTS" giustificato esattamente sulla larghezza della riga sopra.
+// Il blocco è allineato a destra su "right"; h = altezza del logo.
+inline void drawBrand (juce::Graphics& g, float right, float top, float h, juce::Colour col)
 {
-    const float h = area.getHeight();
-    drawLogo (g, area.removeFromLeft (h), col, juce::jmax (1.4f, h * 0.06f));
-    area.removeFromLeft (h * 0.28f);
+    const auto big = font (h * 0.50f, true), small = font (h * 0.27f, false);
+    const auto ink = inkExtent ("COLLATERAL", big);
+    const float textX = right - ink.getLength();
+    drawLogo (g, { textX - h * 1.22f, top, h, h }, col, juce::jmax (1.4f, h * 0.06f));
     g.setColour (col);
-    const auto top = drawInkLeft (g, "LULL", font (h * 0.60f, true), area.getX(), area.getY() + h * 0.58f);
-    drawJustified (g, "AUDIO", font (h * 0.27f, false), top.getStart(), top.getEnd(), area.getY() + h * 0.92f);
+    const auto line = drawInkLeft (g, "COLLATERAL", big, textX, top + h * 0.52f);
+    drawJustified (g, "EFFECTS", small, line.getStart(), line.getEnd(), top + h * 0.92f);
 }
 
 // Icona dell'app Standalone: logo bianco su quadrato arrotondato verde

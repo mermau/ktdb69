@@ -53,8 +53,8 @@ int main()
     cc (p, 22, 127); check (idx (p, ParamIDs::mode) == 3, "CC22=127 → NOTCH");
     cc (p, 22, 40);  check (idx (p, ParamIDs::mode) == 1, "CC22=40 → BELL");
     cc (p, 21, 0);   check (idx (p, ParamIDs::bell) == 0, "CC21=0 → BELL MIN");
-    cc (p, 64, 127); cc (p, 64, 0);  check (idx (p, ParamIDs::mode) == 0, "CC64 premuto → OUT");
-    cc (p, 64, 127); cc (p, 64, 0);  check (idx (p, ParamIDs::mode) == 1, "CC64 di nuovo → torna a BELL");
+    cc (p, 64, 127); cc (p, 64, 0);  check (idx (p, ParamIDs::bypass) == 1, "CC64 premuto → BYPASS acceso");
+    cc (p, 64, 127); cc (p, 64, 0);  check (idx (p, ParamIDs::bypass) == 0, "CC64 di nuovo → BYPASS spento");
 
     auto set = [&] (const char* id, int v) { auto* q = p.apvts.getParameter (id); q->setValueNotifyingHost (q->convertTo0to1 ((float) v)); };
 
@@ -79,6 +79,27 @@ int main()
     set (ParamIDs::mode, 0);
     g = runSine (p, fs, 300, -6, 200) + 6;
     std::printf ("OUT a 300 Hz: %+.3f dB\n", g); check (std::abs (g) < 0.05, "OUT: true bypass a guadagno unitario");
+
+    // bypass: segnale invariato anche con il filtro su 1KC
+    set (ParamIDs::mode, 2); set (ParamIDs::freq, 6); set (ParamIDs::bypass, 1);
+    g = runSine (p, fs, 300, -6, 200) + 6;
+    std::printf ("BYPASS (600 / 1KC) a 300 Hz: %+.3f dB\n", g); check (std::abs (g) < 0.05, "BYPASS: true bypass");
+    set (ParamIDs::bypass, 0);
+    check (p.getBypassParameter() == p.apvts.getParameter (ParamIDs::bypass), "il bypass della DAW comanda lo switch BYPASS");
+
+    // MIDI diretto dalla tastiera (senza passare dalla DAW) + MIDI Learn
+    {
+        DB69Processor q;
+        q.setPlayConfigDetails (2, 2, fs, 512); q.prepareToPlay (fs, 512);
+        q.injectDirectMidiForTest (juce::MidiMessage::controllerEvent (1, 20, 127));
+        check (idx (q, ParamIDs::freq) == 10, "MIDI diretto: CC20 → 7.5KC");
+        q.startLearn (DB69Processor::lBell);
+        q.injectDirectMidiForTest (juce::MidiMessage::controllerEvent (1, 74, 10));
+        q.injectDirectMidiForTest (juce::MidiMessage::controllerEvent (1, 74, 127));
+        check (q.getCCForParam (DB69Processor::lBell) == 74 && idx (q, ParamIDs::bell) == 5, "MIDI Learn da porta diretta: CC74 → BELL");
+        cc (q, 74, 0);
+        check (idx (q, ParamIDs::bell) == 5, "con il MIDI diretto attivo i CC della DAW sono ignorati (niente doppioni)");
+    }
 
     // stato salvato e ricaricato (mappatura MIDI compresa)
     juce::MemoryBlock mb; p.getStateInformation (mb);

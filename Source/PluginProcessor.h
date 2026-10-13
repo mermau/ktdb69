@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
+#include <juce_audio_devices/juce_audio_devices.h>
 #include <array>
 #include <atomic>
 #include "AltecNetwork.h"
@@ -14,14 +15,17 @@ namespace ParamIDs
     inline constexpr const char* input  = "input";
     inline constexpr const char* output = "output";
     inline constexpr const char* clicks = "clicks";
+    inline constexpr const char* bypass = "bypass";
 }
 
 //==============================================================================
-class DB69Processor : public juce::AudioProcessor
+class DB69Processor : public juce::AudioProcessor,
+                      private juce::MidiInputCallback,
+                      private juce::AsyncUpdater
 {
 public:
     DB69Processor();
-    ~DB69Processor() override = default;
+    ~DB69Processor() override;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -50,7 +54,7 @@ public:
 
     //==========================================================================
     // MIDI CC: mappa e MIDI Learn (thread-safe, senza lock)
-    enum Learnable { lFreq = 0, lMode, lBell, lInOut, lInput, lOutput, lClicks, numLearnable };
+    enum Learnable { lFreq = 0, lMode, lBell, lInOut, lInput, lOutput, lClicks, lBypass, numLearnable };
     static const std::array<const char*, numLearnable> learnableNames;
 
     void startLearn (int idx)        { learningParam.store (idx); }
@@ -66,8 +70,31 @@ public:
 
     std::atomic<int> lastCC { -1 }, lastCCValue { 0 }, ccCounter { 0 };
 
+    juce::AudioProcessorParameter* getBypassParameter() const override { return bypassParam; }
+
+    //==========================================================================
+    // Ingresso MIDI diretto: il plugin apre da solo le porte della tastiera, così i CC
+    // arrivano anche su una traccia audio, senza instradamenti nella DAW (e anche in Logic).
+    // "*" = tutti gli ingressi, "" = solo MIDI dalla DAW, altrimenti l'identificatore della porta.
+    static inline const juce::String allInputs { "*" };
+    void setMidiSource (const juce::String& source);
+    juce::String getMidiSource() const;
+    bool directMidiAvailable() const { return wrapperType != wrapperType_Standalone; }
+    juce::StringArray getOpenMidiInputNames() const;
+
+    // per i test: simula un messaggio arrivato dalla porta MIDI diretta e lo elabora subito
+    void injectDirectMidiForTest (const juce::MidiMessage& m)
+    {
+        directActive.store (true);
+        handleIncomingMidiMessage (nullptr, m);
+        handleUpdateNowIfNeeded();
+    }
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
+    void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage&) override;
+    void handleAsyncUpdate() override;
+    void reopenMidiInputs();
     void handleCC (int cc, int value);
     void setParamNorm (juce::RangedAudioParameter* p, float v);
 
@@ -82,6 +109,18 @@ private:
     std::atomic<float>* inRaw   = nullptr;
     std::atomic<float>* outRaw  = nullptr;
     std::atomic<float>* clickRaw = nullptr;
+    std::atomic<float>* bypassRaw = nullptr;
+    juce::AudioParameterBool* bypassParam = nullptr;
+
+    // MIDI diretto: coda senza lock dal thread MIDI al thread dei messaggi
+    juce::String midiSource { "*" };
+    mutable juce::CriticalSection midiLock;
+    std::vector<std::unique_ptr<juce::MidiInput>> midiInputs;
+    juce::MidiDeviceListConnection deviceListConnection;
+    juce::AbstractFifo ccFifo { 512 };
+    std::array<std::pair<int, int>, 512> ccQueue {};
+    juce::SpinLock ccHandlerLock;
+    std::atomic<bool> directActive { false };
 
     std::array<juce::RangedAudioParameter*, numLearnable> learnParams {};
     std::array<std::atomic<int>, 128> ccToParam;
@@ -92,5 +131,6 @@ private:
     int maxBlock = 512, numChannels = 2;
     static constexpr float voltsPerFS = 10.954f;  // 0 dBFS = +18 dBu (EBU R68)
 
+    JUCE_DECLARE_WEAK_REFERENCEABLE (DB69Processor)
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DB69Processor)
 };

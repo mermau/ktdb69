@@ -1,4 +1,4 @@
-# KTKTDB-69 (LULL Audio) — emulazione del filtro passa-alto passivo Altec 9069B (VST3 / AU / Standalone)
+# KTDB-69 (Collateral Effects) — emulazione del filtro passa-alto passivo Altec 9069B (VST3 / AU / Standalone)
 
 Plugin in C++17 con JUCE 8. Riproduce il "Big Knob" di King Tubby: il filtro passa-alto passivo
 Altec 9069B (rete LC da 600 Ω, 18 dB/ottava, 10 frequenze da 70 Hz a 7.5 kHz più OFF), con i tre
@@ -9,9 +9,9 @@ modi del KTBK-1B di Audio Merge, che ha fornito le curve di riferimento.
 ## Grafica
 
 Pannello verde oliva, font TeX Gyre Adventor (stile Avant Garde, incorporato nel plugin) e logo
-LULL Audio con tre curve passa-alto: tre scatti della manopola grande. Lo stesso logo è l'icona
+Collateral Effects con tre curve passa-alto: tre scatti della manopola grande. Lo stesso logo è l'icona
 dell'app Standalone. "TYPE 9069 DUB FILTER" è spaziato per occupare esattamente la larghezza di
-"KTDB-69", e "AUDIO" quella di "LULL": la spaziatura si calcola sui contorni reali delle lettere
+"KTDB-69", e "EFFECTS" quella di "COLLATERAL": la spaziatura si calcola sui contorni reali delle lettere
 (`ui::drawJustified` in `Source/Theme.h`).
 
 Il font è distribuito con la GUST Font License (`resources/fonts/GUST-FONT-LICENSE.txt`), che ne
@@ -26,9 +26,12 @@ Gli stessi del pannello hardware:
 | **Manopola grande** (LOW CUT FREQUENCY) | OFF, 70, 100, 150, 250, 500, 1KC, 2KC, 3KC, 5KC, 7.5KC | 20 |
 | **BELL** | 6 livelli, MIN … MAX (DF0 … DF5) | 21 |
 | **MODE** | OUT (true bypass), BELL, 600, NOTCH | 22 |
-| Pulsante **IN/OUT** (commuta tra OUT e l'ultimo modo usato) | — | 64 (pedale sustain) |
+| **BYPASS** (barra superiore: confronto con e senza filtro) | acceso / spento | 64 (pedale sustain) |
+| Pulsante **IN/OUT** (commuta tra OUT e l'ultimo modo usato) | — | — |
 | INPUT / OUTPUT (barra superiore, ±24 dB) | — | — |
 | CLICK SELETTORE (barra superiore) | acceso / spento | — |
+
+BYPASS è un true bypass con latenza compensata ed è anche il bypass che la DAW vede per il plugin.
 
 - **600** — la risposta originale del 9069B: sorgente e carico da 600 Ω, Butterworth del 3° ordine
   con 6 dB di perdita di inserzione (come l'originale: alza OUTPUT se serve).
@@ -51,20 +54,31 @@ direttamente su una scritta della scala per saltare a quella posizione.
 
 ## Tastiera MIDI (Arturia KeyLab)
 
-**MIDI Learn**: clic destro su un comando → *MIDI Learn* → muovi un encoder, un fader o un pulsante
-della KeyLab. La mappatura è salvata nel progetto. Il pulsante IN/OUT si assegna dal menu del clic
-destro sulla manopola MODE. I comandi a scatti hanno un'isteresi: un fader fermo a cavallo tra due
-posizioni non fa "tremolare" il selettore.
+**Il plugin legge la tastiera direttamente**: apre da solo le porte MIDI del Mac, quindi i comandi
+della KeyLab funzionano anche con il plugin su una traccia audio, senza tracce MIDI né instradamenti,
+in Live come in Logic. Il pulsante **MIDI** nella barra superiore sceglie la porta:
 
-- I pulsanti (IN/OUT, CLICK) commutano alla pressione: in Arturia MIDI Control Center imposta il
-  pulsante in modalità *Gate/Momentary*.
-- Gli encoder della KeyLab vanno lasciati in modalità *Absolute* (0–127).
-- **Ableton Live**: metti il plugin sulla traccia; crea una traccia MIDI con ingresso KeyLab e in
-  *MIDI To* scegli la traccia del filtro → "KTKTDB-69". In alternativa usa la mappatura MIDI
-  di Live (Cmd+M) sui parametri del plugin.
-- **Logic Pro**: l'AU è un normale effetto (Audio FX) e non riceve CC direttamente: usa
-  l'assegnazione controller di Logic (Cmd+K, muovi il comando nel plugin, poi quello sulla KeyLab).
-  MIDI Learn interno e CC predefiniti valgono per VST3 e Standalone.
+- *Tutti gli ingressi MIDI* (predefinito);
+- una porta precisa (es. "KeyLab mkII 61 MIDI"): utile se usi più istanze del plugin e vuoi che
+  rispondano a tastiere diverse;
+- *Nessuno*: solo il MIDI instradato dalla DAW (come un normale plugin).
+
+Il pulsante lampeggia a ogni CC ricevuto; il suo menu mostra le assegnazioni e l'ultimo CC arrivato.
+Con l'ingresso diretto attivo i CC che arrivano anche dalla DAW sono ignorati, così un pulsante non
+viene commutato due volte. Nella versione Standalone la porta si sceglie in *Options → Audio/MIDI Settings*.
+
+**MIDI Learn**: clic destro su un comando → *MIDI Learn* → muovi un encoder, un fader o un pulsante
+della KeyLab. Il pulsante MIDI mostra "LEARN: …" finché non arriva un CC. La mappatura è salvata nel
+progetto. Il pulsante IN/OUT si assegna dal menu del clic destro sulla manopola MODE. I comandi a
+scatti hanno un'isteresi: un fader fermo a cavallo tra due posizioni non fa "tremolare" il selettore.
+
+- La KeyLab deve mandare **CC**: usa la modalità *User* (o *Arturia/Analog Lab*), non la modalità
+  *DAW*, che sulla porta "DAW" trasmette comandi Mackie/HUI e non CC.
+- Gli encoder vanno in modalità *Absolute* (0–127) in Arturia MIDI Control Center.
+- I pulsanti (BYPASS, IN/OUT, CLICK) commutano alla pressione: imposta il pulsante in modalità
+  *Gate/Momentary*.
+- In alternativa puoi sempre usare la mappatura MIDI della DAW sui parametri del plugin
+  (Live: Cmd+M; Logic: Cmd+K).
 
 ## Scaricare la versione per Mac (Apple Silicon e Intel)
 
@@ -76,11 +90,11 @@ con i test del modello e la validazione `auval` dell'Audio Unit.
    anche in **Releases**, scaricabile senza login.
 2. Estrai lo zip (contiene a sua volta `KTDB69-macOS.zip`, estrai anche quello).
 3. Il plugin non è firmato con un certificato Apple Developer: apri il Terminale e trascina dentro la
-   cartella `KTKTDB-69` dopo questo comando:
+   cartella `KTDB-69` dopo questo comando:
    ```
    xattr -dr com.apple.quarantine 
    ```
-   poi fai doppio clic su **Installa KTKTDB-69.command** (copia VST3 e AU nelle cartelle dei plugin
+   poi fai doppio clic su **Installa KTDB-69.command** (copia VST3 e AU nelle cartelle dei plugin
    dell'utente e l'app Standalone in Applicazioni).
 4. Riavvia la DAW (in Logic: se non compare, *Plug-in Manager → Reimposta e riscansiona*).
 

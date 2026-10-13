@@ -2,7 +2,7 @@
 #include "PluginEditor.h"
 
 const std::array<const char*, DB69Processor::numLearnable> DB69Processor::learnableNames {
-    "FREQUENZA", "MODE", "BELL", "IN/OUT", "INPUT", "OUTPUT", "CLICK"
+    "FREQUENZA", "MODE", "BELL", "IN/OUT", "INPUT", "OUTPUT", "CLICK", "BYPASS"
 };
 
 //==============================================================================
@@ -28,6 +28,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DB69Processor::createLayout(
     layout.add (trim (ParamIDs::input, "Input"));
     layout.add (trim (ParamIDs::output, "Output"));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamIDs::clicks, 1 }, "Switch Clicks", true));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamIDs::bypass, 1 }, "Bypass", false));
     return layout;
 }
 
@@ -43,6 +44,8 @@ DB69Processor::DB69Processor()
     inRaw    = apvts.getRawParameterValue (ParamIDs::input);
     outRaw   = apvts.getRawParameterValue (ParamIDs::output);
     clickRaw = apvts.getRawParameterValue (ParamIDs::clicks);
+    bypassRaw = apvts.getRawParameterValue (ParamIDs::bypass);
+    bypassParam = dynamic_cast<juce::AudioParameterBool*> (apvts.getParameter (ParamIDs::bypass));
 
     learnParams[lFreq]   = apvts.getParameter (ParamIDs::freq);
     learnParams[lMode]   = apvts.getParameter (ParamIDs::mode);
@@ -51,8 +54,91 @@ DB69Processor::DB69Processor()
     learnParams[lInput]  = apvts.getParameter (ParamIDs::input);
     learnParams[lOutput] = apvts.getParameter (ParamIDs::output);
     learnParams[lClicks] = apvts.getParameter (ParamIDs::clicks);
+    learnParams[lBypass] = apvts.getParameter (ParamIDs::bypass);
 
     resetDefaultMappings();
+
+    if (directMidiAvailable())
+    {
+        reopenMidiInputs();
+        // tastiera collegata o scollegata con la DAW aperta: si riaprono le porte
+        deviceListConnection = juce::MidiDeviceListConnection::make ([this] { reopenMidiInputs(); });
+    }
+}
+
+DB69Processor::~DB69Processor()
+{
+    deviceListConnection = {};
+    cancelPendingUpdate();
+    const juce::ScopedLock sl (midiLock);
+    for (auto& in : midiInputs) in->stop();
+    midiInputs.clear();
+}
+
+//==============================================================================
+void DB69Processor::reopenMidiInputs()
+{
+    const juce::ScopedLock sl (midiLock);
+    for (auto& in : midiInputs) in->stop();
+    midiInputs.clear();
+
+    if (directMidiAvailable() && midiSource.isNotEmpty())
+        for (const auto& dev : juce::MidiInput::getAvailableDevices())
+        {
+            if (midiSource != allInputs && dev.identifier != midiSource) continue;
+            if (auto in = juce::MidiInput::openDevice (dev.identifier, this))
+            {
+                in->start();
+                midiInputs.push_back (std::move (in));
+            }
+        }
+    directActive.store (! midiInputs.empty());
+}
+
+void DB69Processor::setMidiSource (const juce::String& source)
+{
+    { const juce::ScopedLock sl (midiLock); midiSource = source; }
+    reopenMidiInputs();
+    ++mapVersion;
+}
+
+juce::String DB69Processor::getMidiSource() const
+{
+    const juce::ScopedLock sl (midiLock);
+    return midiSource;
+}
+
+juce::StringArray DB69Processor::getOpenMidiInputNames() const
+{
+    const juce::ScopedLock sl (midiLock);
+    juce::StringArray names;
+    for (auto& in : midiInputs) names.add (in->getName());
+    return names;
+}
+
+// thread MIDI: si accodano solo i CC, l'elaborazione avviene sul thread dei messaggi
+void DB69Processor::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m)
+{
+    if (! m.isController()) return;
+    const auto w = ccFifo.write (1);
+    if (w.blockSize1 > 0) ccQueue[(size_t) w.startIndex1] = { m.getControllerNumber(), m.getControllerValue() };
+    else if (w.blockSize2 > 0) ccQueue[(size_t) w.startIndex2] = { m.getControllerNumber(), m.getControllerValue() };
+    triggerAsyncUpdate();
+}
+
+void DB69Processor::handleAsyncUpdate()
+{
+    const auto r = ccFifo.read (ccFifo.getNumReady());
+    auto run = [this] (int start, int size)
+    {
+        for (int i = start; i < start + size; ++i)
+        {
+            const juce::SpinLock::ScopedLockType sl (ccHandlerLock);
+            handleCC (ccQueue[(size_t) i].first, ccQueue[(size_t) i].second);
+        }
+    };
+    run (r.startIndex1, r.blockSize1);
+    run (r.startIndex2, r.blockSize2);
 }
 
 //==============================================================================
@@ -63,7 +149,7 @@ void DB69Processor::resetDefaultMappings()
     ccToParam[20].store (lFreq);
     ccToParam[21].store (lBell);
     ccToParam[22].store (lMode);
-    ccToParam[64].store (lInOut);
+    ccToParam[64].store (lBypass);
     ++mapVersion;
 }
 
@@ -116,13 +202,13 @@ void DB69Processor::handleCC (int cc, int value)
     if (idx < 0) return;
 
     // pulsanti: commutano alla pressione (KeyLab: pulsante in modalità Gate/Momentary)
-    if (idx == lInOut || idx == lClicks)
+    if (idx == lInOut || idx == lClicks || idx == lBypass)
     {
         const bool high = value >= 64;
         if (high && ! ccHigh[(size_t) cc])
         {
             if (idx == lInOut) toggleInOut();
-            else setParamNorm (learnParams[lClicks], learnParams[lClicks]->getValue() > 0.5f ? 0.0f : 1.0f);
+            else setParamNorm (learnParams[(size_t) idx], learnParams[(size_t) idx]->getValue() > 0.5f ? 0.0f : 1.0f);
         }
         ccHigh[(size_t) cc] = high;
         return;
@@ -182,7 +268,7 @@ void DB69Processor::prepareToPlay (double sampleRate, int samplesPerBlock)
     mixer.setMixingRule (juce::dsp::DryWetMixingRule::linear);
     mixer.prepare ({ sampleRate, (juce::uint32) maxBlock, (juce::uint32) numChannels });
     mixer.setWetLatency (latency);
-    mixer.setWetMixProportion (cfg.mode == db69::Mode::Out ? 0.0f : 1.0f);
+    mixer.setWetMixProportion (cfg.mode == db69::Mode::Out || bypassRaw->load() > 0.5f ? 0.0f : 1.0f);
     mixer.reset();
 
     inGainSm.reset (sampleRate, 0.03);
@@ -195,11 +281,18 @@ void DB69Processor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
 {
     juce::ScopedNoDenormals noDenormals;
 
-    for (const auto meta : midi)
-    {
-        const auto m = meta.getMessage();
-        if (m.isController()) handleCC (m.getControllerNumber(), m.getControllerValue());
-    }
+    // MIDI dalla DAW: usato solo se il plugin non sta già leggendo la tastiera direttamente
+    // (altrimenti ogni pulsante verrebbe commutato due volte)
+    if (! directActive.load())
+        for (const auto meta : midi)
+        {
+            const auto m = meta.getMessage();
+            if (m.isController())
+            {
+                const juce::SpinLock::ScopedTryLockType sl (ccHandlerLock);
+                if (sl.isLocked()) handleCC (m.getControllerNumber(), m.getControllerValue());
+            }
+        }
     midi.clear();
 
     const int numCh = juce::jmin (getTotalNumInputChannels(), numChannels);
@@ -213,7 +306,8 @@ void DB69Processor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
 
     inGainSm.setTargetValue (juce::Decibels::decibelsToGain (inRaw->load()));
     outGainSm.setTargetValue (juce::Decibels::decibelsToGain (outRaw->load()));
-    mixer.setWetMixProportion (cfg.mode == db69::Mode::Out ? 0.0f : 1.0f);   // OUT = true bypass
+    const bool bypassed = cfg.mode == db69::Mode::Out || bypassRaw->load() > 0.5f;
+    mixer.setWetMixProportion (bypassed ? 0.0f : 1.0f);   // OUT o BYPASS = true bypass
 
     juce::dsp::AudioBlock<float> full (buffer);
     full = full.getSubsetChannelBlock (0, (size_t) numCh);
@@ -266,6 +360,7 @@ void DB69Processor::getStateInformation (juce::MemoryBlock& destData)
             e->setAttribute ("num", cc);
             e->setAttribute ("target", idx);
         }
+    root.setAttribute ("midiSource", getMidiSource());
     copyXmlToBinary (root, destData);
 }
 
@@ -288,6 +383,13 @@ void DB69Processor::setStateInformation (const void* data, int sizeInBytes)
                 ccToParam[(size_t) cc].store (idx);
         }
         ++mapVersion;
+    }
+    if (xml->hasAttribute ("midiSource"))
+    {
+        const auto src = xml->getStringAttribute ("midiSource");
+        if (src != getMidiSource())
+            juce::MessageManager::callAsync ([safe = juce::WeakReference<DB69Processor> (this), src]
+                                             { if (safe != nullptr) safe->setMidiSource (src); });
     }
 }
 

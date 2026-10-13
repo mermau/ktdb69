@@ -27,9 +27,9 @@ juce_add_binary_data(KTDB69Assets SOURCES
     resources/fonts/texgyreadventor-bold.otf)
 
 juce_add_plugin(DB69
-    COMPANY_NAME "LULL Audio"
-    BUNDLE_ID com.lullaudio.ktdb69
-    PLUGIN_MANUFACTURER_CODE Lull
+    COMPANY_NAME "Collateral Effects"
+    BUNDLE_ID com.collateraleffects.ktdb69
+    PLUGIN_MANUFACTURER_CODE Clfx
     PLUGIN_CODE Kt69
     PRODUCT_NAME "KTDB-69"
     ICON_BIG resources/icon.png        # icona della Standalone (generata da gui_snapshot icon.png)

@@ -110,6 +110,15 @@ PanelLookAndFeel::PanelLookAndFeel()
     setColour (juce::TooltipWindow::textColourId, ui::theme().text);
 }
 
+juce::Font PanelLookAndFeel::getTextButtonFont (juce::TextButton&, int) { return font (12.0f); }
+
+void PanelLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour& c, bool over, bool)
+{
+    auto r = b.getLocalBounds().toFloat().reduced (1.0f);
+    g.setColour (c.brighter (over ? 0.15f : 0.0f));
+    g.fillRoundedRectangle (r, 5.0f);
+}
+
 void PanelLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos,
                                          float startAngle, float endAngle, juce::Slider&)
 {
@@ -282,12 +291,13 @@ void ClickToggle::paintButton (juce::Graphics& g, bool highlighted, bool)
     g.setColour (juce::Colour (0xff2a2b28).brighter (highlighted ? 0.15f : 0.0f));
     g.fillRoundedRectangle (b, 5.0f);
     auto led = b.removeFromLeft (b.getHeight()).reduced (b.getHeight() * 0.32f);
-    g.setColour (getToggleState() ? ui::theme().accent : juce::Colour (0xff4a4a44));
+    const auto ledOn = alarmColour ? juce::Colour (0xffe8432e) : ui::theme().accent;
+    g.setColour (getToggleState() ? ledOn : juce::Colour (0xff4a4a44));
     g.fillEllipse (led);
-    if (getToggleState()) { g.setColour (ui::theme().accent.withAlpha (0.3f)); g.fillEllipse (led.expanded (3.0f)); }
-    g.setColour (ui::theme().text);
+    if (getToggleState()) { g.setColour (ledOn.withAlpha (0.3f)); g.fillEllipse (led.expanded (3.0f)); }
+    g.setColour (alarmColour && getToggleState() ? juce::Colours::white : ui::theme().text);
     g.setFont (font (12.0f));
-    g.drawText (getToggleState() ? "CLICK SELETTORE" : "SENZA CLICK", b, juce::Justification::centredLeft);
+    g.drawText (getToggleState() ? onText : offText, b, juce::Justification::centredLeft);
 }
 
 //==============================================================================
@@ -347,7 +357,22 @@ PanelContent::PanelContent (DB69Processor& p) : proc (p)
     addAndMakeVisible (clickBtn);
     clickAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (ap, ParamIDs::clicks, clickBtn);
 
+    // ingresso MIDI: sorgente, assegnazioni, stato del MIDI Learn
+    midiBtn.setBounds (514, 9, 136, 26);
+    midiBtn.setTooltip ("Ingresso MIDI della tastiera e assegnazioni dei comandi");
+    midiBtn.onClick = [this] { showMidiMenu(); };
+    midiBtn.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2a2b28));
+    addAndMakeVisible (midiBtn);
+
+    // bypass per il confronto con e senza filtro
+    bypassBtn.setBounds (662, 9, 106, 26);
+    bypassBtn.onLearnMenu = [this] { showLearnMenu (DB69Processor::lBypass, &bypassBtn); };
+    bypassBtn.setTooltip ("Bypass del filtro (true bypass, latenza compensata). Clic destro: MIDI Learn");
+    addAndMakeVisible (bypassBtn);
+    bypassAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (ap, ParamIDs::bypass, bypassBtn);
+
     setSize (baseW, baseH);
+    refresh();
 }
 
 PanelContent::~PanelContent() { proc.cancelLearn(); }
@@ -358,7 +383,26 @@ void PanelContent::refresh()
     bigKnob->learning  = learn == DB69Processor::lFreq;
     modeKnob->learning = learn == DB69Processor::lMode || learn == DB69Processor::lInOut;
     bellKnob->learning = learn == DB69Processor::lBell;
-    repaint (0, 0, baseW, barH);
+    {
+        juce::String t;
+        if (learn >= 0) t = "LEARN: " + juce::String (DB69Processor::learnableNames[(size_t) learn]);
+        else
+        {
+            const auto src = proc.getMidiSource();
+            const auto open = proc.getOpenMidiInputNames();
+            if (! proc.directMidiAvailable()) t = "MIDI";
+            else if (src.isEmpty()) t = "MIDI: DAW";
+            else if (open.isEmpty()) t = "MIDI: --";
+            else t = "MIDI: " + (open.size() == 1 ? open[0] : juce::String ("TUTTI"));
+        }
+        midiBtn.setButtonText (t);
+        const bool flash = proc.ccCounter.load() != lastCCShown;
+        lastCCShown = proc.ccCounter.load();
+        midiBtn.setColour (juce::TextButton::buttonColourId, learn >= 0 ? ui::theme().accent.withAlpha (0.35f)
+                                                             : flash ? ui::theme().accent.withAlpha (0.22f)
+                                                                     : juce::Colour (0xff2a2b28));
+        midiBtn.setColour (juce::TextButton::textColourOffId, ui::theme().text);
+    }
     for (auto* k : { bigKnob.get(), modeKnob.get(), bellKnob.get() })
         if (k->learning || k->learning != k->wasLearning) { k->wasLearning = k->learning; k->repaint(); }
     if (learn >= 0 || learn != lastLearnShown) { lastLearnShown = learn; repaint(); }
@@ -417,8 +461,8 @@ void PanelContent::drawPanel (juce::Graphics& g)
     const auto title = ui::drawInkLeft (g, "KTDB-69", font (36.0f), 44.0f, plate.getY() + 70.0f);
     ui::drawJustified (g, "TYPE 9069 DUB FILTER", font (11.0f, false), title.getStart(), title.getEnd(), plate.getY() + 88.0f);
 
-    // marchio LULL Audio
-    ui::drawBrand (g, juce::Rectangle<float> (plate.getRight() - 196, plate.getY() + 24, 170, 40), ui::theme().logo);
+    // marchio Collateral Effects
+    ui::drawBrand (g, plate.getRight() - 30.0f, plate.getY() + 24.0f, 40.0f, ui::theme().logo);
 
     g.setFont (font (14.0f));
     g.drawText ("MODE", juce::Rectangle<float> (100, (float) barH + 384, 100, 18), juce::Justification::centred);
@@ -437,28 +481,6 @@ void PanelContent::paint (juce::Graphics& g)
     g.drawText ("INPUT",  juce::Rectangle<float> (12, 0, 46, (float) barH), juce::Justification::centredRight);
     g.drawText ("OUTPUT", juce::Rectangle<float> (176, 0, 58, (float) barH), juce::Justification::centredRight);
 
-    // stato MIDI
-    juce::String line1, line2;
-    const int learn = proc.getLearningParam();
-    if (learn >= 0)
-    {
-        line1 = "MIDI LEARN: " + juce::String (DB69Processor::learnableNames[(size_t) learn]);
-        line2 = "muovi un controllo della tastiera...";
-    }
-    else
-    {
-        line1 = "FREQ " + ccText (DB69Processor::lFreq) + "  BELL " + ccText (DB69Processor::lBell)
-              + "  MODE " + ccText (DB69Processor::lMode) + "  IN/OUT " + ccText (DB69Processor::lInOut);
-        const int cc = proc.lastCC.load();
-        line2 = cc >= 0 ? "ultimo: CC" + juce::String (cc) + " = " + juce::String (proc.lastCCValue.load())
-                        : juce::String ("clic destro su un comando: MIDI Learn");
-    }
-    g.setColour (learn >= 0 ? ui::theme().accent : ui::theme().text.withAlpha (0.75f));
-    g.setFont (font (11.0f));
-    g.drawFittedText (line1, juce::Rectangle<int> (514, 5, 256, 16), juce::Justification::centredRight, 1, 0.7f);
-    g.setFont (font (11.0f, false));
-    g.drawFittedText (line2, juce::Rectangle<int> (514, 22, 256, 16), juce::Justification::centredRight, 1, 0.7f);
-
     drawPanel (g);
 }
 
@@ -467,12 +489,54 @@ void PanelContent::paintOverChildren (juce::Graphics& g)
     const int learn = proc.getLearningParam();
     juce::Component* t = learn == DB69Processor::lInput ? (juce::Component*) &inSlider
                        : learn == DB69Processor::lOutput ? (juce::Component*) &outSlider
-                       : learn == DB69Processor::lClicks ? (juce::Component*) &clickBtn : nullptr;
+                       : learn == DB69Processor::lClicks ? (juce::Component*) &clickBtn
+                       : learn == DB69Processor::lBypass ? (juce::Component*) &bypassBtn : nullptr;
     if (t != nullptr)
     {
         g.setColour (ui::theme().accent);
         g.drawRoundedRectangle (t->getBounds().toFloat().expanded (2.0f), 5.0f, 2.0f);
     }
+}
+
+void PanelContent::showMidiMenu()
+{
+    juce::PopupMenu m;
+    const auto src = proc.getMidiSource();
+    const auto devices = juce::MidiInput::getAvailableDevices();
+
+    if (proc.directMidiAvailable())
+    {
+        m.addSectionHeader ("Ingresso MIDI (letto direttamente dal plugin)");
+        m.addItem (1, "Tutti gli ingressi MIDI", true, src == DB69Processor::allInputs);
+        for (int i = 0; i < devices.size(); ++i)
+            m.addItem (100 + i, devices[i].name, true, src == devices[i].identifier);
+        m.addItem (2, "Nessuno: solo MIDI instradato dalla DAW", true, src.isEmpty());
+    }
+    else
+        m.addSectionHeader ("Ingresso MIDI: Options > Audio/MIDI Settings");
+
+    m.addSeparator();
+    m.addSectionHeader ("Assegnazioni (clic destro su un comando per il MIDI Learn)");
+    for (int i = 0; i < DB69Processor::numLearnable; ++i)
+        m.addItem (1000 + i, juce::String (DB69Processor::learnableNames[(size_t) i]) + juce::String (juce::CharPointer_UTF8 ("  \xe2\x80\x94  ")) + ccText (i), false, false);
+    const int cc = proc.lastCC.load();
+    if (cc >= 0)
+        m.addItem (999, "Ultimo ricevuto: CC" + juce::String (cc) + " = " + juce::String (proc.lastCCValue.load()), false, false);
+    m.addSeparator();
+    m.addItem (9, "Ripristina assegnazioni predefinite");
+
+    juce::Component::SafePointer<PanelContent> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&midiBtn),
+                     [safe, devices] (int r)
+                     {
+                         if (safe == nullptr || r == 0) return;
+                         auto& p = safe->proc;
+                         if (r == 1) p.setMidiSource (DB69Processor::allInputs);
+                         if (r == 2) p.setMidiSource ({});
+                         if (r >= 100 && r < 100 + devices.size()) p.setMidiSource (devices[r - 100].identifier);
+                         if (r == 9) p.resetDefaultMappings();
+                         safe->refresh();
+                     });
 }
 
 void PanelContent::showLearnMenu (int idx, juce::Component* target)
@@ -540,12 +604,5 @@ void DB69Editor::resized()
 
 void DB69Editor::timerCallback()
 {
-    const int learn = proc.getLearningParam();
-    const int mv = proc.getMapVersion();
-    const int cnt = proc.ccCounter.load();
-    if (learn >= 0 || learn != lastLearn || mv != lastMapVersion || cnt != lastCCCount)
-    {
-        lastLearn = learn; lastMapVersion = mv; lastCCCount = cnt;
-        content.refresh();
-    }
+    content.refresh();   // aggiorna il pulsante MIDI (sorgente, attività, learn) e gli anelli di learn
 }

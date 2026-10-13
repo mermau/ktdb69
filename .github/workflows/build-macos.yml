@@ -35,7 +35,7 @@ jobs:
         continue-on-error: true
         run: |
           killall -9 AudioComponentRegistrar 2>/dev/null || true
-          auval -v aufx Kt69 Lull
+          auval -v aufx Kt69 Clfx
 
       - name: Firma ad-hoc e pacchetto
         run: |
