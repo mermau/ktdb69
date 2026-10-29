@@ -60,7 +60,8 @@ namespace
         return { c.x + r * std::sin (a), c.y - r * std::cos (a) };
     }
 
-    void drawKnob (juce::Graphics& g, juce::Point<float> c, float r, float angleDeg, bool big)
+    // corpo della manopola (ombra, gonna, spalla, cappello): non dipende dalla posizione
+    void drawKnobBody (juce::Graphics& g, juce::Point<float> c, float r, bool big)
     {
         softShadow (g, c, r);
 
@@ -76,14 +77,16 @@ namespace
         juce::ColourGradient shg (juce::Colour (0xff050505), c.x, c.y - rs, juce::Colour (0xff2b2b2b), c.x, c.y + rs, false);
         g.setGradientFill (shg); g.fillEllipse (c.x - rs, c.y - rs, rs * 2, rs * 2);
 
-        // indice sulla gonna
-        const auto p0 = polarPt (c, rs * 1.0f, angleDeg), p1 = polarPt (c, r * 0.97f, angleDeg);
-        g.setColour (ui::theme().text);
-        g.drawLine ({ p0, p1 }, r * (big ? 0.045f : 0.09f));
-
         // cappello in alluminio
-        const float rc = r * (big ? 0.70f : 0.60f);
-        spunAluminium (g, c, rc);
+        spunAluminium (g, c, r * (big ? 0.70f : 0.60f));
+    }
+
+    // indici (sulla gonna e sul cappello): l'unica parte che si muove
+    void drawKnobPointer (juce::Graphics& g, juce::Point<float> c, float r, float angleDeg, bool big)
+    {
+        const float rs = r * (big ? 0.80f : 0.74f), rc = r * (big ? 0.70f : 0.60f);
+        g.setColour (ui::theme().text);
+        g.drawLine ({ polarPt (c, rs, angleDeg), polarPt (c, r * 0.97f, angleDeg) }, r * (big ? 0.045f : 0.09f));
         if (! big)
         {
             g.setColour (juce::Colour (0xff111111));
@@ -95,6 +98,32 @@ namespace
             g.drawLine ({ polarPt (c, rc * 0.80f, angleDeg), polarPt (c, rc * 0.98f, angleDeg) }, r * 0.03f);
         }
     }
+
+    void drawKnob (juce::Graphics& g, juce::Point<float> c, float r, float angleDeg, bool big)
+    {
+        drawKnobBody (g, c, r, big);
+        drawKnobPointer (g, c, r, angleDeg, big);
+    }
+}
+
+//==============================================================================
+void CachedLayer::draw (juce::Graphics& g, juce::Rectangle<int> area, const std::function<void (juce::Graphics&)>& painter)
+{
+    // la cache è alla risoluzione fisica dello schermo (1x, Retina 2x...). Con uno zoom non intero
+    // (finestra ridimensionata) i bordi cadrebbero tra due pixel e l'immagine andrebbe ricampionata:
+    // in quel caso si disegna direttamente, così la qualità resta identica.
+    const float s = g.getInternalContext().getPhysicalPixelScaleFactor();
+    if (std::abs (s - std::round (s)) > 1.0e-3f) { img = {}; painter (g); return; }
+    if (img.isNull() || std::abs (s - scale) > 1.0e-3f || area != cachedArea)
+    {
+        scale = s; cachedArea = area;
+        img = juce::Image (juce::Image::ARGB, juce::jmax (1, juce::roundToInt ((float) area.getWidth() * s)),
+                           juce::jmax (1, juce::roundToInt ((float) area.getHeight() * s)), true);
+        juce::Graphics ig (img);
+        ig.addTransform (juce::AffineTransform::translation ((float) -area.getX(), (float) -area.getY()).scaled (s));
+        painter (ig);
+    }
+    g.drawImageTransformed (img, juce::AffineTransform::scale (1.0f / scale).translated ((float) area.getX(), (float) area.getY()));
 }
 
 //==============================================================================
@@ -120,7 +149,7 @@ void PanelLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b,
 }
 
 void PanelLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos,
-                                         float startAngle, float endAngle, juce::Slider&)
+                                         float startAngle, float endAngle, juce::Slider& slider)
 {
     const float r = (float) juce::jmin (w, h) * 0.5f - 4.0f;
     const juce::Point<float> c ((float) x + (float) w * 0.5f, (float) y + (float) h * 0.5f);
@@ -128,7 +157,9 @@ void PanelLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w,
     arc.addCentredArc (c.x, c.y, r + 2.5f, r + 2.5f, 0, startAngle, endAngle, true);
     g.setColour (juce::Colours::white.withAlpha (0.12f));
     g.strokePath (arc, juce::PathStrokeType (2.0f));
-    const float mid = startAngle + (endAngle - startAngle) * 0.5f, cur = startAngle + pos * (endAngle - startAngle);
+    // arco del valore: dal centro per i comandi bipolari (±dB), dall'inizio per il MIX
+    const float mid = slider.getMinimum() < 0.0 ? startAngle + (endAngle - startAngle) * 0.5f : startAngle;
+    const float cur = startAngle + pos * (endAngle - startAngle);
     juce::Path val;
     val.addCentredArc (c.x, c.y, r + 2.5f, r + 2.5f, 0, juce::jmin (mid, cur), juce::jmax (mid, cur), true);
     g.setColour (ui::theme().accent);
@@ -158,8 +189,21 @@ bool SteppedKnob::hitTest (int x, int y)
 void SteppedKnob::paint (juce::Graphics& g)
 {
     const bool big = style == Style::Big;
+    staticLayer.draw (g, getLocalBounds(), [this] (juce::Graphics& sg) { paintStatic (sg); });
 
-    // scala
+    if (learning)
+    {
+        const float t = (float) (juce::Time::getMillisecondCounter() % 1000) / 1000.0f;
+        g.setColour (ui::theme().accent.withAlpha (0.45f + 0.45f * std::sin (t * twoPi)));
+        g.drawEllipse (c.x - radius - 5, c.y - radius - 5, (radius + 5) * 2, (radius + 5) * 2, 2.5f);
+    }
+    drawKnobPointer (g, c, radius, angles[(size_t) juce::jlimit (0, (int) angles.size() - 1, index)], big);
+}
+
+// scala, scritte e corpo della manopola: disegnati una volta e tenuti in cache
+void SteppedKnob::paintStatic (juce::Graphics& g)
+{
+    const bool big = style == Style::Big;
     g.setColour (ui::theme().text);
     for (size_t i = 0; i < angles.size(); ++i)
     {
@@ -203,14 +247,7 @@ void SteppedKnob::paint (juce::Graphics& g)
         g.drawText ("IN", juce::Rectangle<float> (lp.x - 22, lp.y - 8, 22, 16), juce::Justification::centredRight);
     }
 
-    if (learning)
-    {
-        const float t = (float) (juce::Time::getMillisecondCounter() % 1000) / 1000.0f;
-        g.setColour (ui::theme().accent.withAlpha (0.45f + 0.45f * std::sin (t * twoPi)));
-        g.drawEllipse (c.x - radius - 5, c.y - radius - 5, (radius + 5) * 2, (radius + 5) * 2, 2.5f);
-    }
-
-    drawKnob (g, c, radius, angles[(size_t) juce::jlimit (0, (int) angles.size() - 1, index)], big);
+    drawKnobBody (g, c, radius, big);
 }
 
 int SteppedKnob::labelAt (juce::Point<float> p) const
@@ -334,23 +371,26 @@ PanelContent::PanelContent (DB69Processor& p) : proc (p)
     for (auto* k : { bigKnob.get(), modeKnob.get(), bellKnob.get() })
         addAndMakeVisible (k);
 
-    auto setupTrim = [this, &ap] (LearnableSlider& s, const char* id, int learnIdx, int x)
+    auto setupTrim = [this, &ap] (LearnableSlider& s, const char* id, int learnIdx, int x, const char* suffix, double def)
     {
         s.setSliderStyle (juce::Slider::RotaryVerticalDrag);
         s.setRotaryParameters (juce::degreesToRadians (-135.0f), juce::degreesToRadians (135.0f), true);
-        s.setTextBoxStyle (juce::Slider::TextBoxRight, false, 62, 18);
-        s.setDoubleClickReturnValue (true, 0.0);
-        s.setTextValueSuffix (" dB");
+        s.setTextBoxStyle (juce::Slider::TextBoxRight, false, 56, 18);
+        s.setDoubleClickReturnValue (true, def);
+        s.setTextValueSuffix (suffix);
         s.onLearnMenu = [this, learnIdx, &s] { showLearnMenu (learnIdx, &s); };
-        s.setBounds (x, 4, 106, 36);
+        s.setBounds (x, 4, 96, 36);
         addAndMakeVisible (s);
-        (learnIdx == DB69Processor::lInput ? inAtt : outAtt) =
-            std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (ap, id, s);
+        auto& att = learnIdx == DB69Processor::lInput ? inAtt : learnIdx == DB69Processor::lOutput ? outAtt : mixAtt;
+        att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (ap, id, s);
     };
-    setupTrim (inSlider,  ParamIDs::input,  DB69Processor::lInput,  60);
-    setupTrim (outSlider, ParamIDs::output, DB69Processor::lOutput, 236);
+    setupTrim (inSlider,  ParamIDs::input,  DB69Processor::lInput,  48,  " dB", 0.0);
+    setupTrim (outSlider, ParamIDs::output, DB69Processor::lOutput, 196, " dB", 0.0);
+    setupTrim (mixSlider, ParamIDs::mix,    DB69Processor::lMix,    322, " %", 100.0);
+    mixSlider.setTooltip ("MIX: filtrato e diretto sommati come sul banco di Tubby (effetto phasing). "
+                          "Il diretto resta perfettamente in fase con il filtrato. Clic destro: MIDI Learn");
 
-    clickBtn.setBounds (360, 9, 142, 26);
+    clickBtn.setBounds (424, 9, 112, 26);
     clickBtn.onLearnMenu = [this] { showLearnMenu (DB69Processor::lClicks, &clickBtn); };
     clickBtn.setTooltip ("Selettore reale: interruzione del contatto e componenti che entrano scarichi (click), "
                          "oppure dissolvenza di 25 ms. Clic destro: MIDI Learn");
@@ -358,14 +398,14 @@ PanelContent::PanelContent (DB69Processor& p) : proc (p)
     clickAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (ap, ParamIDs::clicks, clickBtn);
 
     // ingresso MIDI: sorgente, assegnazioni, stato del MIDI Learn
-    midiBtn.setBounds (514, 9, 136, 26);
+    midiBtn.setBounds (542, 9, 120, 26);
     midiBtn.setTooltip ("Ingresso MIDI della tastiera e assegnazioni dei comandi");
     midiBtn.onClick = [this] { showMidiMenu(); };
     midiBtn.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2a2b28));
     addAndMakeVisible (midiBtn);
 
     // bypass per il confronto con e senza filtro
-    bypassBtn.setBounds (662, 9, 106, 26);
+    bypassBtn.setBounds (668, 9, 102, 26);
     bypassBtn.onLearnMenu = [this] { showLearnMenu (DB69Processor::lBypass, &bypassBtn); };
     bypassBtn.setTooltip ("Bypass del filtro (true bypass, latenza compensata). Clic destro: MIDI Learn");
     addAndMakeVisible (bypassBtn);
@@ -473,13 +513,20 @@ void PanelContent::drawPanel (juce::Graphics& g)
 
 void PanelContent::paint (juce::Graphics& g)
 {
+    background.draw (g, getLocalBounds(), [this] (juce::Graphics& bg) { paintBackground (bg); });
+}
+
+// sfondo statico (barra e pannello con vernice, viti, scritte, marchio): in cache
+void PanelContent::paintBackground (juce::Graphics& g)
+{
     // barra di servizio
     g.setColour (ui::theme().bar); g.fillRect (0, 0, baseW, barH);
     g.setColour (juce::Colours::white.withAlpha (0.06f)); g.drawHorizontalLine (barH - 1, 0, (float) baseW);
     g.setColour (ui::theme().text.withAlpha (0.8f));
     g.setFont (font (11.0f));
-    g.drawText ("INPUT",  juce::Rectangle<float> (12, 0, 46, (float) barH), juce::Justification::centredRight);
-    g.drawText ("OUTPUT", juce::Rectangle<float> (176, 0, 58, (float) barH), juce::Justification::centredRight);
+    g.drawText ("INPUT",  juce::Rectangle<float> (4, 0, 42, (float) barH), juce::Justification::centredRight);
+    g.drawText ("OUTPUT", juce::Rectangle<float> (142, 0, 52, (float) barH), juce::Justification::centredRight);
+    g.drawText ("MIX",    juce::Rectangle<float> (290, 0, 30, (float) barH), juce::Justification::centredRight);
 
     drawPanel (g);
 }
@@ -489,6 +536,7 @@ void PanelContent::paintOverChildren (juce::Graphics& g)
     const int learn = proc.getLearningParam();
     juce::Component* t = learn == DB69Processor::lInput ? (juce::Component*) &inSlider
                        : learn == DB69Processor::lOutput ? (juce::Component*) &outSlider
+                       : learn == DB69Processor::lMix ? (juce::Component*) &mixSlider
                        : learn == DB69Processor::lClicks ? (juce::Component*) &clickBtn
                        : learn == DB69Processor::lBypass ? (juce::Component*) &bypassBtn : nullptr;
     if (t != nullptr)

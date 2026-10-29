@@ -11,7 +11,10 @@
 //                           │          ⏚
 //                           ⏚
 //
-//  C1 = C2 = 1 / (2π·fc·R0),  L = kL · R0 / (4π·fc),  R0 = 600 Ω
+//  C1 = C2 = kC / (2π·fc·R0),  L = kL · R0 / (4π·fc),  R0 = 600 Ω
+//  kL e kC sono le tolleranze dei componenti di ogni scatto, ricavate dalle curve
+//  misurate (taglio in 600, picco BELL e minimo NOTCH di ogni scatto: tre misure,
+//  due incognite, scarto ≤ 0.5 % tra 70 Hz e 3 kHz).
 //  Con Rs = RL = 600 Ω la risposta è una Butterworth del 3° ordine (18 dB/ott)
 //  con 6 dB di perdita di inserzione: la risposta originale del 9069B.
 //
@@ -29,8 +32,11 @@
 //           profondità limitata da r. Il livello BELL aggiunge smorzamento.
 //
 //  Integrazione: analisi nodale a 3 nodi, condensatori e induttore con la regola
-//  dei trapezi; la non linearità dell'induttore è risolta con Newton su una sola
-//  variabile (equivalente di Thevenin visto dall'induttore).
+//  dei trapezi "pre-deformata" (prewarping) sulla risonanza dello scatto scelto:
+//  quella frequenza cade esattamente dove deve anche a 44.1 kHz, senza oversampling
+//  (quindi senza latenza e senza filtri anti-aliasing nel percorso del segnale).
+//  La non linearità dell'induttore è risolta con Newton su una sola variabile
+//  (equivalente di Thevenin visto dall'induttore).
 // =============================================================================
 
 #include <array>
@@ -60,24 +66,29 @@ struct Design
 {
     static constexpr double pi = 3.14159265358979323846;
     static constexpr double R0 = 600.0;     // impedenza caratteristica
-    static constexpr double kL = 1.05;      // tolleranza degli induttori: fa cadere i picchi BELL
-                                            // a ≈1.37·fc e i notch a ≈0.98·fc come nelle misure
     static constexpr double r70 = 51.0;     // resistenza dell'avvolgimento alla presa dei 70 Hz [Ω]
     static constexpr double phiSat70 = 0.09;// flusso di saturazione alla presa dei 70 Hz [V·s]
 
+    // Tolleranze di induttore e condensatori per ogni scatto (indice 1..10), tarate sulle curve
+    // misurate dell'unità di riferimento: agli scatti bassi i componenti reali sono più grandi
+    // del nominale (+14…20 % sul prodotto L·C), a quelli alti il condensatore domina.
+    static constexpr std::array<double, numSteps> kL { 1.0, 1.142, 1.074, 1.104, 1.054, 1.034, 1.037, 1.052, 0.967, 0.987, 0.966 };
+    static constexpr std::array<double, numSteps> kC { 1.0, 1.045, 1.126, 1.033, 1.057, 1.084, 1.038, 0.998, 1.138, 1.137, 1.177 };
+
     // 600: terminazione originale
     static constexpr double lineRs = 600.0, lineRL = 600.0;
-    // BELL: uscita del banco a bassa impedenza, carico scelto dal livello BELL
+    // BELL: uscita del banco a bassa impedenza, carico scelto dal livello BELL (tarato sui 6 livelli misurati)
     static constexpr double bellRs = 40.0;
-    static constexpr std::array<double, numDamping> bellRL { 480.0, 730.0, 1060.0, 1460.0, 2060.0, 3400.0 };
+    static constexpr std::array<double, numDamping> bellRL { 512.0, 845.0, 1311.0, 1754.0, 2493.0, 3744.0 };
     // NOTCH: build-out 600 Ω, carico a ponte, smorzamento in serie al ramo LC
     static constexpr double notchRs = 600.0, notchRL = 20000.0;
     static constexpr std::array<double, numDamping> notchRd { 150.0, 100.0, 47.0, 22.0, 10.0, 0.0 };
 
-    static double C (double fc)      { return 1.0 / (2.0 * pi * fc * R0); }
-    static double L (double fc)      { return kL * R0 / (4.0 * pi * fc); }
-    static double r (double fc)      { return r70 * std::sqrt (70.0 / fc); }
-    static double phiSat (double fc) { return phiSat70 * std::sqrt (70.0 / fc); }
+    // valori per lo scatto "step" (1..10); r e saturazione dipendono dalle spire della presa (nominali)
+    static double C (int step)      { return kC[(size_t) step] / (2.0 * pi * stepFreqs[(size_t) step] * R0); }
+    static double L (int step)      { return kL[(size_t) step] * R0 / (4.0 * pi * stepFreqs[(size_t) step]); }
+    static double r (int step)      { return r70 * std::sqrt (70.0 / stepFreqs[(size_t) step]); }
+    static double phiSat (int step) { return phiSat70 * std::sqrt (70.0 / stepFreqs[(size_t) step]); }
 };
 
 struct Config
@@ -102,8 +113,7 @@ inline std::complex<double> analyticResponse (const Config& c, double f)
     if (c.mode == Mode::Notch) { Rs = Design::notchRs; RL = Design::notchRL; }
     if (c.step == 0) return RL / (Rs + RL);
 
-    const double fc = stepFreqs[(size_t) c.step];
-    const double C = Design::C (fc), L = Design::L (fc), r = Design::r (fc);
+    const double C = Design::C (c.step), L = Design::L (c.step), r = Design::r (c.step);
     const cd zl = s * L + r;
 
     if (c.mode == Mode::Notch)
@@ -168,26 +178,27 @@ public:
 
         if (hasL)
         {
-            // Thevenin visto dall'induttore (nodo B → massa), r in serie
-            const double Voc = v[1];
-            const double Rt  = Z[1][1] + rL;
-            const double hist = phi + 0.5 * T * vLp;
-            const double k = 0.5 * T;
+            // Thevenin visto dall'induttore (nodo B → massa), r in serie: Voc - Rt·i
+            const double Voc  = v[1];
+            const double hist = phi + halfT * vLp;
 
-            // soluzione lineare come punto di partenza
-            double ph = (hist + k * Voc) / (1.0 + k * Rt / Lval);
-            for (int it = 0; it < 8; ++it)
+            // soluzione lineare; Newton solo se il nucleo si avvicina alla saturazione
+            double ph = (hist + halfT * Voc) * linDen;
+            double x2 = ph * invPhiS; x2 *= x2;
+            if (x2 > 1.0e-6)   // sotto: la correzione è < 1e-6 relativo (−120 dB), inutile calcolarla
             {
-                const double x = ph * invPhiS;
-                const double g  = ph / Lval * (1.0 + x * x);
-                const double dg = (1.0 + 3.0 * x * x) / Lval;
-                const double F  = ph - hist - k * (Voc - Rt * g);
-                const double step = F / (1.0 + k * Rt * dg);
-                ph -= step;
-                if (std::abs (step) <= 1.0e-12 + 1.0e-9 * std::abs (ph)) break;
+                for (int it = 0; it < 8; ++it)
+                {
+                    const double g  = ph * invL * (1.0 + x2);
+                    const double dg = invL * (1.0 + 3.0 * x2);
+                    const double F  = ph - hist - halfT * (Voc - Rt * g);
+                    const double step = F / (1.0 + halfT * Rt * dg);
+                    ph -= step;
+                    x2 = ph * invPhiS; x2 *= x2;
+                    if (std::abs (step) <= 1.0e-12 + 1.0e-9 * std::abs (ph)) break;
+                }
             }
-            const double x = ph * invPhiS;
-            const double iL = ph / Lval * (1.0 + x * x);
+            const double iL = ph * invL * (1.0 + x2);
             vLp = Voc - Rt * iL;
             phi = ph;
             for (int n = 0; n < 3; ++n) v[n] -= Z[n][1] * iL;
@@ -218,7 +229,7 @@ private:
         const double leak = 1.0e-9;
         for (int n = 0; n < 3; ++n) M[n][n] += leak;
 
-        numCaps = 0; hasL = false; outNode = 0;
+        numCaps = 0; hasL = false; outNode = 0; halfT = 0.5 * T;
         double Rs = Design::lineRs, RL = Design::lineRL;
         if (cfg.mode == Mode::Bell)  { Rs = Design::bellRs;  RL = Design::bellRL[(size_t) cfg.damping]; }
         if (cfg.mode == Mode::Notch) { Rs = Design::notchRs; RL = Design::notchRL; }
@@ -227,14 +238,18 @@ private:
 
         if (cfg.mode != Mode::Out && cfg.step > 0)
         {
-            const double fc = stepFreqs[(size_t) cfg.step];
-            Lval = Design::L (fc);
-            rL = Design::r (fc);
-            invPhiS = 1.0 / Design::phiSat (fc);
+            Lval = Design::L (cfg.step);
+            rL = Design::r (cfg.step);
+            invPhiS = 1.0 / Design::phiSat (cfg.step);
             hasL = true;
-            const double C = Design::C (fc);
+            const double C = Design::C (cfg.step);
+            const bool notch = cfg.mode == Mode::Notch;
 
-            if (cfg.mode == Mode::Notch)
+            // passo di integrazione pre-deformato sulla risonanza L–C serie della rete
+            const double w0 = 1.0 / std::sqrt (Lval * (notch ? 2.0 * C : C));
+            halfT = std::tan (w0 * 0.5 * T) / w0;
+
+            if (notch)
             {
                 setCap (0, 0, 1, 2.0 * C);           // C1‖C2 in serie al ramo L
                 rL += Design::notchRd[(size_t) cfg.damping];
@@ -248,7 +263,7 @@ private:
                 addG (2, -1, 1.0 / RL);
                 outNode = 2;
             }
-            for (int k = 0; k < numCaps; ++k)
+        for (int k = 0; k < numCaps; ++k)
                 addG (caps[(size_t) k].p, caps[(size_t) k].q, caps[(size_t) k].G);
         }
         else
@@ -257,12 +272,16 @@ private:
             outNode = 0;
         }
         invert3 (M, Z);
+        // costanti per l'induttore, calcolate una volta per configurazione
+        invL   = 1.0 / Lval;
+        Rt     = Z[1][1] + rL;
+        linDen = 1.0 / (1.0 + halfT * Rt * invL);
     }
 
     void setCap (int idx, int p, int q, double C)
     {
         auto& cp = caps[(size_t) idx];
-        cp.p = p; cp.q = q; cp.C = C; cp.G = 2.0 * C / T;
+        cp.p = p; cp.q = q; cp.C = C; cp.G = C / halfT;
         numCaps = idx + 1;
     }
 
@@ -288,12 +307,15 @@ private:
     int numCaps = 0, outNode = 0;
     bool hasL = false;
     double Lval = 1.0, rL = 0.0, invPhiS = 1.0, phi = 0.0, vLp = 0.0;
+    double halfT = 0.5 / 192000.0, invL = 1.0, Rt = 0.0, linDen = 1.0;
 };
 
 //==============================================================================
 // Un canale con il comportamento del selettore rotativo:
-//  - clicks = true : selettore "break-before-make": per ~1.5 ms il segnale è
-//    interrotto e i nuovi componenti entrano scarichi → click e transitori reali
+//  - clicks = true : il contatto si apre (≈0.6–1.6 ms), poi rimbalza 1–3 volte prima di
+//    chiudersi ("clicks and crunches" del banco di Tubby); i nuovi componenti entrano
+//    scarichi → click e transitori reali. La sequenza dei rimbalzi cambia a ogni scatto
+//    ma è la stessa per i due canali (è un solo selettore).
 //  - clicks = false: le due reti girano in parallelo e si incrociano in 25 ms
 class FilterChannel
 {
@@ -303,14 +325,13 @@ public:
         fs = sampleRate;
         for (auto& n : net) { n.prepare (sampleRate); n.configure (current); n.reset(); }
         fadeLen = (int) std::lround (0.025 * fs);
-        breakLen = (int) std::lround (0.0015 * fs);
-        fadePos = -1; breakLeft = 0; target = current;
+        fadePos = -1; segLeft = 0; numSegs = 0; target = current;
     }
 
     void reset()
     {
         for (auto& n : net) { n.reset(); n.setSourceOpen (false); }
-        fadePos = -1; breakLeft = 0;
+        fadePos = -1; segLeft = 0; numSegs = 0;
         if (target != current) apply();
     }
 
@@ -322,7 +343,7 @@ public:
 
     double process (double vin)
     {
-        if (breakLeft > 0 && --breakLeft == 0) net[(size_t) a].setSourceOpen (false);
+        if (segLeft > 0 && --segLeft == 0) nextSegment();
 
         double y = net[(size_t) a].process (vin);
         if (fadePos >= 0)
@@ -347,10 +368,10 @@ private:
 
         if (targetClicks && bothActive)
         {
-            // contatto interrotto, poi i nuovi componenti (scarichi) entrano nel circuito
+            // contatto aperto, poi i nuovi componenti (scarichi) entrano nel circuito
             net[(size_t) a].configure (c, true);
             net[(size_t) a].reset();
-            breakLeft = breakLen;
+            makeBounce();
             return;
         }
         // dissolvenza tra la rete attuale e quella nuova
@@ -360,10 +381,46 @@ private:
             net[(size_t) nb].copyStateFrom (net[(size_t) a]);
         else
             net[(size_t) nb].reset();
-        fadeFrom = a; a = nb; fadePos = 0; breakLeft = 0;
+        fadeFrom = a; a = nb; fadePos = 0; segLeft = 0; numSegs = 0;
         // con i click attivi l'ingresso/uscita (relè true bypass) è quasi istantaneo
         fadeLenCur = targetClicks ? atLeastOne ((int) std::lround (0.002 * fs)) : fadeLen;
     }
+
+    // durate alternate aperto/chiuso/aperto/... (in campioni); l'ultima fase è sempre chiusa
+    void makeBounce()
+    {
+        unsigned st = 0x9069u + 2654435761u * ++events;          // stesso seme per i due canali
+        auto rnd = [&st] (double lo, double hi)
+        {
+            st = st * 1664525u + 1013904223u;
+            return lo + (hi - lo) * (double) (st >> 8) / 16777216.0;
+        };
+        auto ms = [this] (double t) { return atLeastOne ((int) std::lround (t * 0.001 * fs)); };
+        numSegs = 0;
+        seg[(size_t) numSegs++] = ms (rnd (0.6, 1.6));            // apertura principale
+        const int bounces = 1 + (int) rnd (0.0, 3.0);
+        for (int b = 0; b < bounces && numSegs + 2 <= (int) seg.size(); ++b)
+        {
+            seg[(size_t) numSegs++] = ms (rnd (0.08, 0.6));       // chiuso
+            seg[(size_t) numSegs++] = ms (rnd (0.02, 0.2));       // rimbalzo (aperto)
+        }
+        segIdx = 0; segLeft = seg[0];
+    }
+
+    void nextSegment()
+    {
+        if (++segIdx < numSegs)
+        {
+            net[(size_t) a].setSourceOpen (segIdx % 2 == 0);
+            segLeft = seg[(size_t) segIdx];
+        }
+        else
+        {
+            net[(size_t) a].setSourceOpen (false);
+            numSegs = 0;
+        }
+    }
+
     static int atLeastOne (int v) { return v < 1 ? 1 : v; }
 
     std::array<Network, 2> net;
@@ -371,7 +428,9 @@ private:
     bool targetClicks = true;
     double fs = 48000.0;
     int a = 0, fadeFrom = 1, fadePos = -1, fadeLen = 1200, fadeLenCur = 1200;
-    int breakLen = 72, breakLeft = 0;
+    std::array<int, 8> seg {};
+    int numSegs = 0, segIdx = 0, segLeft = 0;
+    unsigned events = 0;
 };
 
 } // namespace db69

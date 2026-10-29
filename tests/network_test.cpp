@@ -35,27 +35,37 @@ static double thd (Network& n, double fs, double f, double amp)
 
 int main (int argc, char** argv)
 {
-    const double fs = 192000.0;
+    const double fs = 48000.0;
     const double vFS = 7.746 * std::sqrt (2.0);   // 0 dBFS = +18 dBu
     Network n; n.prepare (fs);
     int fails = 0;
 
-    // 1) simulazione vs teoria (piccolo segnale)
-    double maxErr = 0;
-    for (int mode = 1; mode <= 3; ++mode)
-        for (int st = 0; st < numSteps; ++st)
-            for (int d = 0; d < numDamping; d += (mode == 2 ? 6 : 1))
-            {
-                Config c { (Mode) mode, st, d }; n.configure (c);
-                for (double f : { 30.0, 60.0, 120.0, 300.0, 700.0, 1500.0, 3000.0, 6000.0, 10000.0, 15000.0 })
+    // 1) simulazione vs teoria (piccolo segnale) alle frequenze di campionamento reali, senza oversampling
+    for (double rate : { 176400.0, 192000.0 })   // la rete gira sempre qui (oversampling 4x o 2x)
+    {
+        Network nr; nr.prepare (rate);
+        double maxErr = 0, maxPk = 0;
+        for (int mode = 1; mode <= 3; ++mode)
+            for (int st = 0; st < numSteps; ++st)
+                for (int d = 0; d < numDamping; d += (mode == 2 ? 6 : 1))
                 {
-                    const double sim = sineGainDb (n, fs, f, 0.01);
-                    const double th = 20 * std::log10 (std::abs (analyticResponse (c, f)));
-                    if (th > -40) maxErr = std::max (maxErr, std::abs (sim - th));
+                    Config c { (Mode) mode, st, d }; nr.configure (c);
+                    for (double f : { 30.0, 60.0, 120.0, 300.0, 700.0, 1500.0, 3000.0, 6000.0, 10000.0, 14000.0 })
+                    {
+                        const double sim = sineGainDb (nr, rate, f, 0.01);
+                        const double th = 20 * std::log10 (std::abs (analyticResponse (c, f)));
+                        if (th > -40) maxErr = std::max (maxErr, std::abs (sim - th));
+                    }
+                    if (mode == 1 && st > 0)   // picco BELL: frequenza e altezza
+                    {
+                        double bf = 0, bg = -1e9;
+                        for (double f = 50; f < 15000; f *= 1.002) { double v = 20 * std::log10 (std::abs (analyticResponse (c, f))); if (v > bg) { bg = v; bf = f; } }
+                        maxPk = std::max (maxPk, std::abs (sineGainDb (nr, rate, bf, 0.01) - bg));
+                    }
                 }
-            }
-    std::printf ("Errore max simulazione vs teoria (> -40 dB): %.3f dB\n", maxErr);
-    if (maxErr > 0.5) ++fails;
+        std::printf ("%.1f kHz: errore max simulazione vs teoria fino a 14 kHz %.3f dB, sui picchi BELL %.3f dB\n", rate / 1000, maxErr, maxPk);
+        if (maxErr > 0.3 || maxPk > 0.1) ++fails;
+    }
 
     // 2) punti di controllo rispetto alle curve pubblicate
     auto peakOf = [] (Config c, bool minimum) { double best = minimum ? 1e9 : -1e9, bf = 0;
@@ -79,6 +89,16 @@ int main (int argc, char** argv)
         n.configure ({ Mode::Bell, 1, 5 });     double tb = thd (n, fs, 100, amp);
         n.configure ({ Mode::Bell, 6, 5 });     double tb1k = thd (n, fs, 1500, amp);
         std::printf ("THD %+5.0f dBu: 600/70Hz@100Hz %.3f%%  BELL/70Hz@100Hz %.3f%%  BELL/1KC@1.5kHz %.4f%%\n", dBu, t600, tb, tb1k);
+    }
+
+    // 3b) aliasing della saturazione senza oversampling: THD a 48 kHz contro 192 kHz
+    {
+        Network a48, a192; a48.prepare (48000.0); a192.prepare (192000.0);
+        const double amp = 0.7746 * std::sqrt (2.0) * std::pow (10.0, 24.0 / 20.0);
+        a48.configure ({ Mode::Bell, 1, 5 }); a192.configure ({ Mode::Bell, 1, 5 });
+        const double t48 = thd (a48, 48000.0, 100, amp), t192 = thd (a192, 192000.0, 100, amp);
+        std::printf ("THD +24 dBu BELL/70 Hz a 100 Hz: %.3f%% a 48 kHz, %.3f%% a 192 kHz\n", t48, t192);
+        if (std::abs (t48 - t192) > 0.05 * t192) ++fails;
     }
 
     // 4) click del selettore: sinusoide 200 Hz a -12 dBFS, passaggio 150 → 250 in BELL max
@@ -112,7 +132,7 @@ int main (int argc, char** argv)
         }
         auto t1 = std::chrono::high_resolution_clock::now();
         const double sec = std::chrono::duration<double> (t1 - t0).count();
-        std::printf ("10 s a 192 kHz (rumore +12 dBFS, cambi continui): %.3f s CPU (%.1f%% di un core per canale) %s\n",
+        std::printf ("10 s a 48 kHz (rumore +12 dBFS, cambi continui): %.3f s CPU (%.1f%% di un core per canale) %s\n",
                      sec, 100 * sec / 10, std::isfinite (acc) ? "stabile" : "INSTABILE");
         if (! std::isfinite (acc)) ++fails;
     }

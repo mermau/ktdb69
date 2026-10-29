@@ -2,7 +2,7 @@
 #include "PluginEditor.h"
 
 const std::array<const char*, DB69Processor::numLearnable> DB69Processor::learnableNames {
-    "FREQUENZA", "MODE", "BELL", "IN/OUT", "INPUT", "OUTPUT", "CLICK", "BYPASS"
+    "FREQUENZA", "MODE", "BELL", "IN/OUT", "INPUT", "OUTPUT", "CLICK", "BYPASS", "MIX"
 };
 
 //==============================================================================
@@ -29,6 +29,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout DB69Processor::createLayout(
     layout.add (trim (ParamIDs::output, "Output"));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamIDs::clicks, 1 }, "Switch Clicks", true));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamIDs::bypass, 1 }, "Bypass", false));
+    // MIX: segnale filtrato e diretto sommati come sul banco di Tubby (effetto phasing)
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::mix, 1 }, "Mix",
+        NormalisableRange<float> (0.0f, 100.0f, 1.0f), 100.0f, AudioParameterFloatAttributes().withLabel ("%")));
     return layout;
 }
 
@@ -45,6 +48,7 @@ DB69Processor::DB69Processor()
     outRaw   = apvts.getRawParameterValue (ParamIDs::output);
     clickRaw = apvts.getRawParameterValue (ParamIDs::clicks);
     bypassRaw = apvts.getRawParameterValue (ParamIDs::bypass);
+    mixRaw    = apvts.getRawParameterValue (ParamIDs::mix);
     bypassParam = dynamic_cast<juce::AudioParameterBool*> (apvts.getParameter (ParamIDs::bypass));
 
     learnParams[lFreq]   = apvts.getParameter (ParamIDs::freq);
@@ -55,6 +59,7 @@ DB69Processor::DB69Processor()
     learnParams[lOutput] = apvts.getParameter (ParamIDs::output);
     learnParams[lClicks] = apvts.getParameter (ParamIDs::clicks);
     learnParams[lBypass] = apvts.getParameter (ParamIDs::bypass);
+    learnParams[lMix]    = apvts.getParameter (ParamIDs::mix);
 
     resetDefaultMappings();
 
@@ -244,14 +249,16 @@ bool DB69Processor::isBusesLayoutSupported (const BusesLayout& layouts) const
 void DB69Processor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     numChannels = juce::jlimit (1, 2, getTotalNumOutputChannels());
+    currentRate = sampleRate;
     maxBlock = juce::jmax (1, samplesPerBlock);
 
-    // la rete gira sempre a 176-192 kHz: niente "warping" della bilineare sui picchi alti
+    // la rete gira sempre a 176-192 kHz: picchi alti esatti e niente aliasing dalla saturazione
     const int order = sampleRate > 120000.0 ? 0 : (sampleRate > 60000.0 ? 1 : 2);
-    oversampling = std::make_unique<juce::dsp::Oversampling<float>> (
-        (size_t) numChannels, (size_t) order,
-        juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true, true);
-    oversampling->initProcessing ((size_t) maxBlock);
+    auto makeOS = [&] { auto o = std::make_unique<juce::dsp::Oversampling<float>> ((size_t) numChannels, (size_t) order,
+                                                                                  oversamplingFilter, true, true);
+                        o->initProcessing ((size_t) maxBlock); return o; };
+    oversampling = makeOS();
+    twin = makeOS();     // stesso percorso senza la rete: il diretto del MIX resta in fase con il filtrato
 
     const double osRate = sampleRate * (double) oversampling->getOversamplingFactor();
     const db69::Config cfg { (db69::Mode) (int) modeRaw->load(), (int) freqRaw->load(), (int) bellRaw->load() };
@@ -262,14 +269,18 @@ void DB69Processor::prepareToPlay (double sampleRate, int samplesPerBlock)
         ch.reset();
     }
 
-    const auto latency = oversampling->getLatencyInSamples();
-    setLatencySamples (juce::roundToInt (latency));
+    // latenza intera: il BYPASS è il segnale originale ritardato di esattamente questi campioni
+    latency = juce::roundToInt (oversampling->getLatencyInSamples());
+    setLatencySamples (latency);
+    dryDelay.assign ((size_t) numChannels, std::vector<float> ((size_t) juce::jmax (1, latency), 0.0f));
+    dryPos = 0;
+    twinBuf.setSize (numChannels, maxBlock, false, false, true);
+    dryBuf.setSize (numChannels, maxBlock, false, false, true);
 
-    mixer.setMixingRule (juce::dsp::DryWetMixingRule::linear);
-    mixer.prepare ({ sampleRate, (juce::uint32) maxBlock, (juce::uint32) numChannels });
-    mixer.setWetLatency (latency);
-    mixer.setWetMixProportion (cfg.mode == db69::Mode::Out || bypassRaw->load() > 0.5f ? 0.0f : 1.0f);
-    mixer.reset();
+    const bool bypassed = cfg.mode == db69::Mode::Out || bypassRaw->load() > 0.5f;
+    bypassSm.reset (sampleRate, 0.03); bypassSm.setCurrentAndTargetValue (bypassed ? 1.0f : 0.0f);
+    mixSm.reset (sampleRate, 0.03);    mixSm.setCurrentAndTargetValue (mixRaw->load() * 0.01f);
+    bypassedSamples = 0; filterAsleep = false;
 
     inGainSm.reset (sampleRate, 0.03);
     outGainSm.reset (sampleRate, 0.03);
@@ -306,8 +317,21 @@ void DB69Processor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
 
     inGainSm.setTargetValue (juce::Decibels::decibelsToGain (inRaw->load()));
     outGainSm.setTargetValue (juce::Decibels::decibelsToGain (outRaw->load()));
-    const bool bypassed = cfg.mode == db69::Mode::Out || bypassRaw->load() > 0.5f;
-    mixer.setWetMixProportion (bypassed ? 0.0f : 1.0f);   // OUT o BYPASS = true bypass
+    const bool bypassed = cfg.mode == db69::Mode::Out || bypassRaw->load() > 0.5f;   // OUT o BYPASS = true bypass
+    bypassSm.setTargetValue (bypassed ? 1.0f : 0.0f);
+    mixSm.setTargetValue (mixRaw->load() * 0.01f);
+
+    // filtro escluso da più di 150 ms (dissolvenza finita): non serve calcolarlo.
+    // Quando torna in circuito riparte scarico, come una rete appena ricollegata.
+    if (bypassed) bypassedSamples = juce::jmin (bypassedSamples + buffer.getNumSamples(), 1 << 30);
+    else bypassedSamples = 0;
+    const bool sleep = bypassedSamples > (int) (0.15 * currentRate);
+    if (! sleep && filterAsleep)
+    {
+        for (auto& ch : channels) ch.reset();
+        oversampling->reset(); twin->reset();
+    }
+    filterAsleep = sleep;
 
     juce::dsp::AudioBlock<float> full (buffer);
     full = full.getSubsetChannelBlock (0, (size_t) numCh);
@@ -317,15 +341,44 @@ void DB69Processor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     {
         const int n = juce::jmin (maxBlock, buffer.getNumSamples() - offset);
         auto block = full.getSubBlock ((size_t) offset, (size_t) n);
+        juce::dsp::AudioBlock<float> dry (dryBuf), tw (twinBuf);
+        dry = dry.getSubsetChannelBlock (0, (size_t) numCh).getSubBlock (0, (size_t) n);
+        tw  = tw.getSubsetChannelBlock (0, (size_t) numCh).getSubBlock (0, (size_t) n);
 
-        mixer.pushDrySamples (block);
+        // diretto vero (BYPASS): l'ingresso ritardato della latenza, campione per campione
+        dry.copyFrom (block);
+        if (latency > 0)
+            for (int ch = 0; ch < numCh; ++ch)
+            {
+                auto* d = dry.getChannelPointer ((size_t) ch);
+                auto& line = dryDelay[(size_t) ch];
+                int pos = dryPos;
+                for (int i = 0; i < n; ++i)
+                {
+                    const float x = d[i]; d[i] = line[(size_t) pos]; line[(size_t) pos] = x;
+                    if (++pos == latency) pos = 0;
+                }
+            }
+        dryPos = latency > 0 ? (dryPos + n) % latency : 0;
 
+        if (sleep)
+        {
+            block.copyFrom (dry);
+            bypassSm.skip (n); mixSm.skip (n); inGainSm.skip (n); outGainSm.skip (n);
+            continue;
+        }
+
+        // diretto per il MIX: attraversa gli stessi filtri dell'oversampling, senza la rete
+        tw.copyFrom (block);
+        twin->processSamplesUp (tw);
+        twin->processSamplesDown (tw);
+
+        // percorso filtrato
         for (int i = 0; i < n; ++i)
         {
             const float g = inGainSm.getNextValue() * voltsPerFS;
             for (int ch = 0; ch < numCh; ++ch) block.getChannelPointer ((size_t) ch)[i] *= g;
         }
-
         auto up = oversampling->processSamplesUp (block);
         for (int ch = 0; ch < numCh; ++ch)
         {
@@ -336,13 +389,18 @@ void DB69Processor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         }
         oversampling->processSamplesDown (block);
 
+        // uscita = BYPASS · diretto + (1 − BYPASS) · [(1 − MIX) · diretto in fase + MIX · filtrato]
         for (int i = 0; i < n; ++i)
         {
             const float g = outGainSm.getNextValue() / voltsPerFS;
-            for (int ch = 0; ch < numCh; ++ch) block.getChannelPointer ((size_t) ch)[i] *= g;
+            const float m = mixSm.getNextValue(), b = bypassSm.getNextValue();
+            for (int ch = 0; ch < numCh; ++ch)
+            {
+                auto* y = block.getChannelPointer ((size_t) ch);
+                const float wet = (1.0f - m) * tw.getSample (ch, i) + m * g * y[i];
+                y[i] = b * dry.getSample (ch, i) + (1.0f - b) * wet;
+            }
         }
-
-        mixer.mixWetSamples (block);
     }
 }
 

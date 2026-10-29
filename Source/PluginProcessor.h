@@ -16,6 +16,7 @@ namespace ParamIDs
     inline constexpr const char* output = "output";
     inline constexpr const char* clicks = "clicks";
     inline constexpr const char* bypass = "bypass";
+    inline constexpr const char* mix    = "mix";
 }
 
 //==============================================================================
@@ -31,6 +32,7 @@ public:
     void releaseResources() override {}
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    using AudioProcessor::processBlock;   // la versione double resta quella di JUCE
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
@@ -54,7 +56,7 @@ public:
 
     //==========================================================================
     // MIDI CC: mappa e MIDI Learn (thread-safe, senza lock)
-    enum Learnable { lFreq = 0, lMode, lBell, lInOut, lInput, lOutput, lClicks, lBypass, numLearnable };
+    enum Learnable { lFreq = 0, lMode, lBell, lInOut, lInput, lOutput, lClicks, lBypass, lMix, numLearnable };
     static const std::array<const char*, numLearnable> learnableNames;
 
     void startLearn (int idx)        { learningParam.store (idx); }
@@ -100,7 +102,11 @@ private:
 
     std::array<db69::FilterChannel, 2> channels;
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampling;
-    juce::dsp::DryWetMixer<float> mixer { 512 };
+    std::unique_ptr<juce::dsp::Oversampling<float>> twin;
+    juce::AudioBuffer<float> twinBuf, dryBuf;
+    std::vector<std::vector<float>> dryDelay;
+    int dryPos = 0, latency = 0;
+    juce::SmoothedValue<float> bypassSm, mixSm;
     juce::SmoothedValue<float> inGainSm, outGainSm;
 
     std::atomic<float>* freqRaw = nullptr;
@@ -110,6 +116,9 @@ private:
     std::atomic<float>* outRaw  = nullptr;
     std::atomic<float>* clickRaw = nullptr;
     std::atomic<float>* bypassRaw = nullptr;
+    std::atomic<float>* mixRaw = nullptr;
+    int bypassedSamples = 0;        // da quanto il filtro è escluso (per non calcolarlo inutilmente)
+    bool filterAsleep = false;
     juce::AudioParameterBool* bypassParam = nullptr;
 
     // MIDI diretto: coda senza lock dal thread MIDI al thread dei messaggi
@@ -129,6 +138,12 @@ private:
     std::atomic<int> lastActiveMode { (int) db69::Mode::Bell };
 
     int maxBlock = 512, numChannels = 2;
+    double currentRate = 48000.0;
+public:
+    // filtri dell'oversampling: IIR polifase (latenza minima); la fase coincide tra filtrato e
+    // diretto del MIX perché anche il diretto passa per un oversampler gemello
+    static constexpr auto oversamplingFilter = juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR;
+private:
     static constexpr float voltsPerFS = 10.954f;  // 0 dBFS = +18 dBu (EBU R68)
 
     JUCE_DECLARE_WEAK_REFERENCEABLE (DB69Processor)

@@ -29,7 +29,8 @@ Gli stessi del pannello hardware:
 | **BYPASS** (barra superiore: confronto con e senza filtro) | acceso / spento | 64 (pedale sustain) |
 | Pulsante **IN/OUT** (commuta tra OUT e l'ultimo modo usato) | — | — |
 | INPUT / OUTPUT (barra superiore, ±24 dB) | — | — |
-| CLICK SELETTORE (barra superiore) | acceso / spento | — |
+| MIX (barra superiore: filtrato + diretto, effetto phasing) | 0–100 % | — |
+| CLICK (barra superiore: rimbalzi del selettore) | acceso / spento | — |
 
 BYPASS è un true bypass con latenza compensata ed è anche il bypass che la DAW vede per il plugin.
 
@@ -45,8 +46,9 @@ BYPASS è un true bypass con latenza compensata ed è anche il bypass che la DAW
 - **OUT** — true bypass, latenza compensata.
 
 **Click del selettore** (acceso di serie): come un vero commutatore rotativo, a ogni scatto il
-contatto si interrompe per 1.5 ms e i nuovi componenti entrano nel circuito scarichi: nascono click e
-transitori reali, che in BELL suonano come il tipico "colpo" risonante delle sweep dub. Spento, il
+contatto si apre, rimbalza qualche volta e i nuovi componenti entrano nel circuito scarichi: nascono
+click, piccoli "crunch" e transitori reali, che in BELL suonano come il tipico "colpo" risonante
+delle sweep dub. Spento, il
 passaggio tra le posizioni è una dissolvenza di 25 ms.
 
 Uso con il mouse: trascina in verticale (o in orizzontale), usa la rotella, oppure clicca
@@ -102,11 +104,12 @@ con i test del modello e la validazione `auval` dell'Audio Unit.
 
 ![Curve calcolate dal modello](docs/curve.png)
 
-Rete a T "costante-K" da 600 Ω (la stessa famiglia di filtri Langevin/Altec dell'epoca):
+Rete a T "costante-K" da 600 Ω con induttore toroidale a prese (la topologia descritta sia da
+Audio Merge sia da AudioThing per il 9069B):
 
 ```
-Vin ─ Rs ─ A ──||── B ──||── C ─┬─ uscita       C1 = C2 = 1 / (2π·fc·600)
-               C1    │    C2    RL              L = 1.05 · 600 / (4π·fc)
+Vin ─ Rs ─ A ──||── B ──||── C ─┬─ uscita       C1 = C2 = kC / (2π·fc·600)
+               C1    │    C2    RL              L = kL · 600 / (4π·fc)
                      L (+r)     │
                      ⏚          ⏚
 ```
@@ -114,28 +117,55 @@ Vin ─ Rs ─ A ──||── B ──||── C ─┬─ uscita       C1 = C
 | Modo | Rs | RL |
 |---|---|---|
 | 600 | 600 Ω | 600 Ω |
-| BELL | 40 Ω | 480 / 730 / 1060 / 1460 / 2060 / 3400 Ω (MIN … MAX) |
+| BELL | 40 Ω | 512 / 845 / 1311 / 1754 / 2493 / 3744 Ω (MIN … MAX) |
 | NOTCH | 600 Ω | 20 kΩ, ramo (C1‖C2) + L con 150 / 100 / 47 / 22 / 10 / 0 Ω in serie |
 
-- Con 600 Ω da entrambi i lati la rete è esattamente una Butterworth del 3° ordine (g = 1, 2, 1):
+- Con 600 Ω da entrambi i lati la rete è una Butterworth del 3° ordine (g = 1, 2, 1):
   −9 dB alla frequenza indicata, −6 dB in banda passante, 18 dB/ottava.
-- Gli induttori sono le prese di un toroide: resistenza dell'avvolgimento r = 51 Ω·√(70/fc). Questo
-  solo dato, oltre ai valori nominali, fa coincidere le profondità del NOTCH (−22 / −33 / −42 dB a
-  70 Hz / 1 kHz / 7.5 kHz) e i picchi BELL con le curve misurate.
-- Il fattore 1.05 sulle induttanze (tolleranza dei componenti) porta i picchi BELL a 1.37·fc e i notch
-  a 0.98·fc, come nelle misure.
+- Gli induttori sono le prese di un toroide: resistenza dell'avvolgimento r = 51 Ω·√(70/fc). Con
+  questo solo dato le profondità del NOTCH previste coincidono con quelle misurate su tutti e dieci gli
+  scatti entro 0.6 dB (da −22.5 dB a 70 Hz a −41.3 dB a 7.5 kHz).
+- **Tolleranze dei componenti, scatto per scatto.** Dalle curve misurate dell'unità di riferimento
+  (grafici Audio Merge, digitalizzati) si leggono per ogni scatto tre frequenze indipendenti: il taglio
+  in 600, il picco BELL e il minimo NOTCH. Due soli fattori per scatto (kL per l'induttore, kC per i
+  condensatori) le riproducono tutte e tre entro lo 0.5 % tra 70 Hz e 3 kHz:
+
+  | Scatto | 70 | 100 | 150 | 250 | 500 | 1K | 2K | 3K | 5K | 7.5K |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | kL | 1.14 | 1.07 | 1.10 | 1.05 | 1.03 | 1.04 | 1.05 | 0.97 | 0.99 | 0.97 |
+  | kC | 1.05 | 1.13 | 1.03 | 1.06 | 1.08 | 1.04 | 1.00 | 1.14 | 1.14 | 1.18 |
+  | picco BELL / fc | 1.32 | 1.31 | 1.34 | 1.35 | 1.35 | 1.37 | 1.38 | 1.35 | 1.33 | 1.31 |
+
+  Sono scostamenti tipici di componenti degli anni '60 e danno a ogni scatto il suo carattere, invece
+  di una serie di filtri tutti uguali e solo traslati.
+- I sei livelli BELL sono tarati sulle sei curve misurate (circa +1 / +4 / +7 / +8.6 / +10.4 / +12 dB
+  a 1 kHz; il massimo sale da +10 dB a 70 Hz a +13 dB a 7.5 kHz per effetto delle perdite dell'induttore).
 - Il nucleo satura dolcemente (i = φ/L·(1+(φ/φs)²)): a livello di linea è trasparente (0.005 % a
   +4 dBu in 600), si sente spingendo INPUT sui passi bassi, soprattutto in BELL. 0 dBFS = +18 dBu.
-- Risoluzione: analisi nodale a 3 nodi con la regola dei trapezi; la non linearità dell'induttore è
-  risolta con Newton su una sola variabile (equivalente di Thevenin). La rete gira sempre a
-  176–192 kHz (oversampling 4× a 44.1/48 kHz, 2× a 88.2/96 kHz, latenza 6 o 4 campioni): così anche il
-  picco BELL a 10 kHz cade dove deve. Circa 1–2 % di un core per canale.
+- **Selettore**: con CLICK acceso il contatto si apre per 0.6–1.6 ms e poi rimbalza 1–3 volte prima di
+  chiudersi, mentre i componenti del nuovo scatto entrano scarichi: sono i "click e crunch" del banco
+  di Tubby descritti nelle fonti. La sequenza cambia a ogni scatto, ed è la stessa sui due canali.
+- **MIX** (barra superiore): somma filtrato e diretto come si faceva sul banco, da cui l'effetto
+  phasing citato nelle descrizioni del suono di Tubby. Il diretto attraversa un oversampler gemello
+  senza la rete, quindi la somma è perfettamente in fase (scarto 0.000 dB da 20 Hz a 20 kHz): il
+  phasing che si sente è solo quello del filtro. OUTPUT agisce sul percorso filtrato.
+- **BYPASS** è il segnale originale ritardato esattamente della latenza dichiarata (6 campioni a
+  44.1/48 kHz). Dopo 150 ms di bypass la rete smette di essere calcolata (CPU quasi nulla) e quando
+  torna in circuito riparte scarica, come una rete appena ricollegata.
+- Risoluzione: analisi nodale a 3 nodi con la regola dei trapezi pre-deformata (prewarping) sulla
+  risonanza dello scatto; la non linearità dell'induttore è risolta con Newton su una sola variabile
+  (equivalente di Thevenin), saltato quando il nucleo è lontano dalla saturazione. La rete gira sempre
+  a 176–192 kHz (oversampling 4× a 44.1/48 kHz, 2× a 88.2/96 kHz): errore massimo rispetto alla
+  risposta teorica 0.27 dB fino a 14 kHz, 0.06 dB sui picchi BELL. Circa 3 % di un core per un'istanza
+  stereo a 48 kHz.
+- Interfaccia: sfondo e parti fisse delle manopole sono tenuti in cache alla risoluzione dello schermo
+  (disegno completo circa 3.5 volte più veloce su Retina); con zoom non intero si disegna direttamente.
 
 Tutti i valori sono in `struct Design` dentro `Source/AltecNetwork.h`.
 
-**Limiti noti**: lo schema interno del 9069B non è pubblicato; la topologia è quella standard dei
-filtri a costante-K da 600 Ω dell'epoca, tarata sulle curve del KTBK-1B (che dichiara di essere
-validato sull'originale). La saturazione del nucleo è un'ipotesi ragionevole, non una misura. Il modo
+**Limiti noti**: lo schema interno del 9069B non è pubblicato. La topologia è quella indicata dalle
+fonti (rete a T con induttori toroidali) e la taratura viene dalle curve del KTBK-1B, che dichiara di
+essere validato sull'originale: le tolleranze descrivono quindi l'unità misurata, non ogni 9069B. La saturazione del nucleo è un'ipotesi ragionevole, non una misura. Il modo
 NOTCH riproduce il comportamento descritto da Audio Merge, non un circuito documentato.
 
 ## Compilazione

@@ -18,6 +18,18 @@ public:
 };
 
 //==============================================================================
+// Livello grafico statico tenuto in un'immagine alla risoluzione fisica dello schermo
+struct CachedLayer
+{
+    void draw (juce::Graphics&, juce::Rectangle<int> area, const std::function<void (juce::Graphics&)>& painter);
+    void invalidate() { img = {}; }
+private:
+    juce::Image img;
+    float scale = 0.0f;
+    juce::Rectangle<int> cachedArea;
+};
+
+//==============================================================================
 // Selettore rotativo a scatti (manopola grande, MODE, BELL) disegnato come sul pannello
 class SteppedKnob : public juce::Component
 {
@@ -40,6 +52,8 @@ public:
 
 private:
     void setIndex (int i, bool notify);
+    void paintStatic (juce::Graphics&);
+    CachedLayer staticLayer;
     int labelAt (juce::Point<float> p) const;
     juce::Point<float> polar (float r, float deg) const;
 
@@ -69,7 +83,7 @@ public:
 class ClickToggle : public juce::ToggleButton
 {
 public:
-    ClickToggle (juce::String on = "CLICK SELETTORE", juce::String off = "SENZA CLICK", bool alarm = false)
+    ClickToggle (juce::String on = "CLICK ON", juce::String off = "CLICK OFF", bool alarm = false)
         : onText (on), offText (off), alarmColour (alarm) { setButtonText (on); }
     juce::String onText, offText;
     bool alarmColour;
@@ -95,15 +109,17 @@ public:
 private:
     void showLearnMenu (int idx, juce::Component* target);
     void drawPanel (juce::Graphics&);
+    void paintBackground (juce::Graphics&);
+    CachedLayer background;
     juce::String ccText (int idx) const;
 
     DB69Processor& proc;
     std::unique_ptr<SteppedKnob> bigKnob, modeKnob, bellKnob;
-    LearnableSlider inSlider, outSlider;
+    LearnableSlider inSlider, outSlider, mixSlider;
     ClickToggle clickBtn, bypassBtn { "BYPASS", "BYPASS", true };
     juce::TextButton midiBtn;
     void showMidiMenu();
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> inAtt, outAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> inAtt, outAtt, mixAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> clickAtt, bypassAtt;
     int lastLearnShown = -1, lastCCShown = 0;
 };
