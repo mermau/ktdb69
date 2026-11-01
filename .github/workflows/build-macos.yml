@@ -46,6 +46,7 @@ jobs:
           cp scripts/installa.command "dist/KTDB-69/Installa KTDB-69.command"
           chmod +x "dist/KTDB-69/Installa KTDB-69.command"
           cp README.md "dist/KTDB-69/"
+          cp docs/Manuale-KTDB-69.pdf "dist/KTDB-69/"
           lipo -info "dist/KTDB-69/KTDB-69.vst3/Contents/MacOS/KTDB-69"
           (cd dist && ditto -c -k --keepParent "KTDB-69" ../KTDB69-macOS.zip)
 

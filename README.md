@@ -6,6 +6,8 @@ modi del KTBK-1B di Audio Merge, che ha fornito le curve di riferimento.
 
 ![Interfaccia](docs/screenshot.png)
 
+Manuale d'uso: [docs/Manuale-KTDB-69.pdf](docs/Manuale-KTDB-69.pdf) (incluso anche nello zip per Mac).
+
 ## Grafica
 
 Pannello verde oliva, font TeX Gyre Adventor (stile Avant Garde, incorporato nel plugin) e logo
